@@ -1,31 +1,36 @@
 import os
-import json
-import threading
 
-from flask import Flask, request, abort
 import requests
-
-from bot import get_market_data, get_headlines, build_prompt, call_groq, send_telegram
+from flask import Flask, request, abort
 
 app = Flask(__name__)
 
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+GITHUB_PAT         = os.environ["GITHUB_PAT"]
+GITHUB_REPO        = "RysonTwf/stock-bot"
+WORKFLOW_FILE      = "daily_brief.yml"
 
 
-def _send_brief_async(chat_id: str) -> None:
-    try:
-        market_data = get_market_data()
-        headlines   = get_headlines()
-        prompt      = build_prompt(market_data, headlines)
-        brief       = call_groq(prompt)
-        send_telegram(brief, chat_id=chat_id)
-    except Exception as e:
-        error_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(error_url, json={
-            "chat_id":    chat_id,
-            "text":       f"⚠️ Brief failed: {e}",
-            "parse_mode": "HTML",
-        }, timeout=10)
+def _ack(chat_id: str, text: str) -> None:
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+        json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+        timeout=10,
+    )
+
+
+def _trigger_github_actions(chat_id: str) -> bool:
+    resp = requests.post(
+        f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/{WORKFLOW_FILE}/dispatches",
+        headers={
+            "Authorization": f"Bearer {GITHUB_PAT}",
+            "Accept":        "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        json={"ref": "main", "inputs": {"chat_id": chat_id}},
+        timeout=15,
+    )
+    return resp.status_code == 204
 
 
 @app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
@@ -33,7 +38,7 @@ def webhook():
     if not request.is_json:
         abort(400)
 
-    update = request.get_json()
+    update  = request.get_json()
     message = update.get("message") or update.get("edited_message")
     if not message:
         return "ok"
@@ -42,15 +47,11 @@ def webhook():
     text    = message.get("text", "").strip()
 
     if text.startswith("/brief"):
-        # Acknowledge immediately so Telegram doesn't retry
-        ack_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(ack_url, json={
-            "chat_id":    chat_id,
-            "text":       "⏳ Fetching your brief, one moment...",
-            "parse_mode": "HTML",
-        }, timeout=10)
-        # Run the heavy work in a background thread
-        threading.Thread(target=_send_brief_async, args=(chat_id,), daemon=True).start()
+        ok = _trigger_github_actions(chat_id)
+        if ok:
+            _ack(chat_id, "⏳ Brief incoming — give it about a minute...")
+        else:
+            _ack(chat_id, "⚠️ Failed to trigger brief. Check GitHub Actions secrets.")
 
     return "ok"
 
