@@ -22,7 +22,10 @@ INDICES = {
 
 RSS_FEEDS = [
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC,^IXIC,NVDA,AMD,MU,MRVL,INTC,AMAT&region=US&lang=en-US",
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL,MSFT,GOOGL,META,AMZN,TSLA,ORCL,ARM,AVGO,QCOM&region=US&lang=en-US",
     "https://www.cnbc.com/id/19854910/device/rss/rss.html",
+    "https://www.cnbc.com/id/10000664/device/rss/rss.html",
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,TSM,ASML,AMAT,LRCX,KLAC,MU,AMD,INTC,MRVL&region=US&lang=en-US",
 ]
 
 SEMI_AI_KEYWORDS = [
@@ -65,7 +68,7 @@ def get_market_data() -> dict:
 # ---------------------------------------------------------------------------
 # RSS headlines
 # ---------------------------------------------------------------------------
-def get_headlines(max_per_feed: int = 20, top_n: int = 5) -> list[dict]:
+def get_headlines(max_per_feed: int = 25, top_n: int = 10) -> list[dict]:
     all_headlines: list[dict] = []
     for url in RSS_FEEDS:
         try:
@@ -128,9 +131,10 @@ SECTION 1 — <b>📊 Market Pulse</b>
 SECTION 2 — <b>🔬 Semis + AI Headlines</b>
 STRICT FILTERING RULES — apply before writing anything:
   • INCLUDE a headline only if it names a specific company AND you can identify its ticker.
-    Known tickers: NVDA, AMD, INTC, MU, MRVL, AMAT, ASML, QCOM, AVGO, TSM, AAPL, MSFT, GOOGL, META, AMZN, ORCL, ARM.
+    Known tickers: NVDA, AMD, INTC, MU, MRVL, AMAT, ASML, QCOM, AVGO, TSM, AAPL, MSFT, GOOGL, META, AMZN, TSLA, ORCL, ARM, LRCX, KLAC.
   • REJECT any headline that is vague, speculative, or names no specific company
     (e.g. "AI stocks could rise", "semiconductor sector faces headwinds" — these are garbage, skip them).
+  • Target up to 10 headlines. Include as many as pass the filter, up to 10.
   • If fewer than 3 headlines pass the filter, include only the ones that do.
   • If ZERO headlines pass the filter, write exactly: <i>No strong catalysts found today.</i>
 
@@ -160,7 +164,7 @@ def call_groq(prompt: str) -> str:
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
-        max_tokens=1024,
+        max_tokens=1500,
     )
     return resp.choices[0].message.content.strip()
 
