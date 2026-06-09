@@ -21,11 +21,12 @@ INDICES = {
 }
 
 RSS_FEEDS = [
-    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC,^IXIC,NVDA,AMD,MU,MRVL,INTC,AMAT&region=US&lang=en-US",
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,AMD,MU,MRVL,INTC,AMAT&region=US&lang=en-US",
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL,MSFT,GOOGL,META,AMZN,TSLA,ORCL,ARM,AVGO,QCOM&region=US&lang=en-US",
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=TSM,ASML,LRCX,KLAC,TSEM,TXN,SWKS,ONTO,WOLF,SLAB&region=US&lang=en-US",
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=SMCI,HPE,DELL,CDNS,SNPS,MCHP,ADI,NXPI,ON,STM&region=US&lang=en-US",
     "https://www.cnbc.com/id/19854910/device/rss/rss.html",
     "https://www.cnbc.com/id/10000664/device/rss/rss.html",
-    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,TSM,ASML,AMAT,LRCX,KLAC,MU,AMD,INTC,MRVL&region=US&lang=en-US",
 ]
 
 SEMI_AI_KEYWORDS = [
@@ -68,7 +69,7 @@ def get_market_data() -> dict:
 # ---------------------------------------------------------------------------
 # RSS headlines
 # ---------------------------------------------------------------------------
-def get_headlines(max_per_feed: int = 25, top_n: int = 10) -> list[dict]:
+def get_headlines(max_per_feed: int = 30, top_n: int = 20) -> list[dict]:
     all_headlines: list[dict] = []
     for url in RSS_FEEDS:
         try:
@@ -130,11 +131,11 @@ SECTION 1 — <b>📊 Market Pulse</b>
 
 SECTION 2 — <b>🔬 Semis + AI Headlines</b>
 STRICT FILTERING RULES — apply before writing anything:
-  • INCLUDE a headline only if it names a specific company AND you can identify its ticker.
-    Known tickers: NVDA, AMD, INTC, MU, MRVL, AMAT, ASML, QCOM, AVGO, TSM, AAPL, MSFT, GOOGL, META, AMZN, TSLA, ORCL, ARM, LRCX, KLAC.
-  • REJECT any headline that is vague, speculative, or names no specific company
-    (e.g. "AI stocks could rise", "semiconductor sector faces headwinds" — these are garbage, skip them).
-  • Target up to 10 headlines. Include as many as pass the filter, up to 10.
+  • INCLUDE a headline if it names a specific company — even if the ticker is not in the list below, use your knowledge to identify it.
+    Reference tickers: NVDA, AMD, INTC, MU, MRVL, AMAT, ASML, QCOM, AVGO, TSM, TSEM, AAPL, MSFT, GOOGL, META, AMZN, TSLA, ORCL, ARM, LRCX, KLAC, TXN, ADI, NXPI, ON, MCHP, SMCI, DELL, HPE, CDNS, SNPS, SWKS.
+  • Do NOT skip a headline just because the ticker is not in that list — if you know the company's ticker, include it.
+  • REJECT only headlines that name NO specific company at all (e.g. "AI stocks could rise", "semiconductor sector faces headwinds").
+  • You will receive up to 20 raw headlines. Include every one that names a specific company, up to 10 in the output.
   • If fewer than 3 headlines pass the filter, include only the ones that do.
   • If ZERO headlines pass the filter, write exactly: <i>No strong catalysts found today.</i>
 
