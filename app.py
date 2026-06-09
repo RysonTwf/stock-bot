@@ -18,7 +18,7 @@ def _send_brief_async(chat_id: str) -> None:
         headlines   = get_headlines()
         prompt      = build_prompt(market_data, headlines)
         brief       = call_groq(prompt)
-        send_telegram(brief)
+        send_telegram(brief, chat_id=chat_id)
     except Exception as e:
         error_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         requests.post(error_url, json={

@@ -173,10 +173,10 @@ def call_groq(prompt: str) -> str:
 # ---------------------------------------------------------------------------
 # Telegram
 # ---------------------------------------------------------------------------
-def send_telegram(message: str) -> dict:
+def send_telegram(message: str, chat_id: str | None = None) -> dict:
     url     = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
-        "chat_id":                  TELEGRAM_CHAT_ID,
+        "chat_id":                  chat_id or TELEGRAM_CHAT_ID,
         "text":                     message,
         "parse_mode":               "HTML",
         "disable_web_page_preview": True,
