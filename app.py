@@ -10,9 +10,9 @@ TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 GITHUB_PAT         = os.environ["GITHUB_PAT"]
 GITHUB_REPO        = "RysonTwf/stock-bot"
 WORKFLOW_FILE      = "daily_brief.yml"
-COOLDOWN_SECONDS   = 1800  # 30 minutes per chat
+MAX_REQUESTS_PER_HOUR = 5
 
-_last_triggered: dict[str, float] = {}
+_request_log: dict[str, list[float]] = {}  # chat_id -> list of timestamps
 
 
 def _ack(chat_id: str, text: str) -> None:
@@ -52,17 +52,19 @@ def webhook():
 
     if text.startswith("/brief"):
         now      = time.time()
-        last     = _last_triggered.get(chat_id, 0)
-        elapsed  = now - last
-        if elapsed < COOLDOWN_SECONDS:
-            remaining = int((COOLDOWN_SECONDS - elapsed) / 60) + 1
-            _ack(chat_id, f"⏱ Cooldown active — next brief available in {remaining} min.")
+        window   = now - 3600  # 1-hour sliding window
+        history  = [t for t in _request_log.get(chat_id, []) if t > window]
+
+        if len(history) >= MAX_REQUESTS_PER_HOUR:
+            oldest       = min(history)
+            reset_in_min = int((oldest + 3600 - now) / 60) + 1
+            _ack(chat_id, f"🚫 Limit reached (5/hr) — resets in {reset_in_min} min.")
             return "ok"
 
         ok = _trigger_github_actions(chat_id)
         if ok:
-            _last_triggered[chat_id] = now
-            _ack(chat_id, "⏳ Brief incoming — give it about a minute...")
+            _request_log[chat_id] = history + [now]
+            _ack(chat_id, f"⏳ Brief incoming — give it about a minute... ({len(history) + 1}/5 this hour)")
         else:
             _ack(chat_id, "⚠️ Failed to trigger brief. Check GitHub Actions secrets.")
 
