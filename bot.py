@@ -47,17 +47,13 @@ def get_market_data() -> dict:
     data = {}
     for name, ticker in INDICES.items():
         try:
-            t = yf.Ticker(ticker)
-            hist = t.history(period="2d")
-            if len(hist) >= 2:
-                prev_close = hist["Close"].iloc[-2]
-                current    = hist["Close"].iloc[-1]
+            t          = yf.Ticker(ticker)
+            fi         = t.fast_info
+            current    = fi.last_price
+            prev_close = fi.previous_close
+            if prev_close and prev_close != 0:
                 change_pct = (current - prev_close) / prev_close * 100
-            elif len(hist) == 1:
-                current    = hist["Close"].iloc[-1]
-                change_pct = 0.0
             else:
-                current    = 0.0
                 change_pct = 0.0
             data[name] = {"price": float(current), "change_pct": float(change_pct)}
         except Exception as e:
