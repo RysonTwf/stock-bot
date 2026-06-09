@@ -1,4 +1,5 @@
 import os
+import time
 
 import requests
 from flask import Flask, request, abort
@@ -9,6 +10,9 @@ TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 GITHUB_PAT         = os.environ["GITHUB_PAT"]
 GITHUB_REPO        = "RysonTwf/stock-bot"
 WORKFLOW_FILE      = "daily_brief.yml"
+COOLDOWN_SECONDS   = 1800  # 30 minutes per chat
+
+_last_triggered: dict[str, float] = {}
 
 
 def _ack(chat_id: str, text: str) -> None:
@@ -47,8 +51,17 @@ def webhook():
     text    = message.get("text", "").strip()
 
     if text.startswith("/brief"):
+        now      = time.time()
+        last     = _last_triggered.get(chat_id, 0)
+        elapsed  = now - last
+        if elapsed < COOLDOWN_SECONDS:
+            remaining = int((COOLDOWN_SECONDS - elapsed) / 60) + 1
+            _ack(chat_id, f"⏱ Cooldown active — next brief available in {remaining} min.")
+            return "ok"
+
         ok = _trigger_github_actions(chat_id)
         if ok:
+            _last_triggered[chat_id] = now
             _ack(chat_id, "⏳ Brief incoming — give it about a minute...")
         else:
             _ack(chat_id, "⚠️ Failed to trigger brief. Check GitHub Actions secrets.")
