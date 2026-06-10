@@ -1,18 +1,20 @@
 import os
 import time
+import threading
 
 import requests
 from flask import Flask, request, abort
 
 app = Flask(__name__)
 
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-GITHUB_PAT         = os.environ["GITHUB_PAT"]
-GITHUB_REPO        = "RysonTwf/stock-bot"
-WORKFLOW_FILE      = "daily_brief.yml"
+TELEGRAM_BOT_TOKEN    = os.environ["TELEGRAM_BOT_TOKEN"]
+GITHUB_PAT            = os.environ["GITHUB_PAT"]
+GITHUB_REPO           = "RysonTwf/stock-bot"
+WORKFLOW_FILE         = "daily_brief.yml"
 MAX_REQUESTS_PER_HOUR = 5
 
 _request_log: dict[str, list[float]] = {}  # chat_id -> list of timestamps
+_seen_updates: set[int] = set()            # deduplicate Telegram retries
 
 
 def _ack(chat_id: str, text: str) -> None:
@@ -37,12 +39,32 @@ def _trigger_github_actions(chat_id: str) -> bool:
     return resp.status_code == 204
 
 
+def _dispatch_brief(chat_id: str, slot: int) -> None:
+    ok = _trigger_github_actions(chat_id)
+    if ok:
+        _ack(chat_id, f"⏳ Brief incoming — give it about a minute... ({slot}/5 this hour)")
+    else:
+        _ack(chat_id, "⚠️ Failed to trigger brief. Check GitHub Actions secrets.")
+
+
 @app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
 def webhook():
     if not request.is_json:
         abort(400)
 
-    update  = request.get_json()
+    update = request.get_json()
+
+    # Deduplicate: Telegram resends the same update_id if we don't respond fast enough
+    update_id = update.get("update_id")
+    if update_id in _seen_updates:
+        return "ok"
+    _seen_updates.add(update_id)
+    # Keep the set bounded — retain only the 250 highest IDs (Telegram IDs are monotonically increasing)
+    if len(_seen_updates) > 500:
+        keep = sorted(_seen_updates)[-250:]
+        _seen_updates.clear()
+        _seen_updates.update(keep)
+
     message = update.get("message") or update.get("edited_message")
     if not message:
         return "ok"
@@ -51,9 +73,9 @@ def webhook():
     text    = message.get("text", "").strip()
 
     if text.startswith("/brief"):
-        now      = time.time()
-        window   = now - 3600  # 1-hour sliding window
-        history  = [t for t in _request_log.get(chat_id, []) if t > window]
+        now     = time.time()
+        window  = now - 3600
+        history = [t for t in _request_log.get(chat_id, []) if t > window]
 
         if len(history) >= MAX_REQUESTS_PER_HOUR:
             oldest       = min(history)
@@ -61,12 +83,11 @@ def webhook():
             _ack(chat_id, f"🚫 Limit reached (5/hr) — resets in {reset_in_min} min.")
             return "ok"
 
-        ok = _trigger_github_actions(chat_id)
-        if ok:
-            _request_log[chat_id] = history + [now]
-            _ack(chat_id, f"⏳ Brief incoming — give it about a minute... ({len(history) + 1}/5 this hour)")
-        else:
-            _ack(chat_id, "⚠️ Failed to trigger brief. Check GitHub Actions secrets.")
+        # Optimistically reserve a slot, then dispatch in background so Telegram
+        # gets a fast response and won't retry the same update
+        slot = len(history) + 1
+        _request_log[chat_id] = history + [now]
+        threading.Thread(target=_dispatch_brief, args=(chat_id, slot), daemon=True).start()
 
     return "ok"
 
