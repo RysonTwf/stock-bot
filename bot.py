@@ -62,17 +62,31 @@ SEMI_AI_KEYWORDS = [
 # Market data
 # ---------------------------------------------------------------------------
 def get_market_data() -> dict:
-    data = {}
-    for name, ticker in {**INDICES, **SECTORS}.items():
+    """Last completed session close + % change vs prior close, from daily bars.
+
+    Daily bars match published closing values; fast_info is cached and has
+    returned wrong VIX/index numbers.
+    """
+    tickers = {**INDICES, **SECTORS}
+    data: dict = {}
+    try:
+        daily  = yf.download(list(tickers.values()), period="10d", interval="1d",
+                             progress=False, auto_adjust=False)
+        closes = daily["Close"]
+    except Exception as e:
+        print(f"  [warn] Could not fetch index data: {e}", file=sys.stderr)
+        return data
+    for name, ticker in tickers.items():
         try:
-            fi         = yf.Ticker(ticker).fast_info
-            current    = fi.last_price
-            prev_close = fi.regular_market_previous_close  # previous_close is stale/wrong
-            change_pct = (current - prev_close) / prev_close * 100 if prev_close else 0.0
-            data[name] = {"price": float(current), "change_pct": float(change_pct)}
+            s = closes[ticker].dropna()
+            # Exclude any partial bar for today so we only report settled closes
+            s = s[s.index.normalize().date < date.today()]
+            if len(s) < 2:
+                continue
+            cur, prev = float(s.iloc[-1]), float(s.iloc[-2])
+            data[name] = {"price": cur, "change_pct": (cur - prev) / prev * 100}
         except Exception as e:
-            print(f"  [warn] Could not fetch {ticker}: {e}", file=sys.stderr)
-            data[name] = {"price": 0.0, "change_pct": 0.0}
+            print(f"  [warn] Could not parse {ticker}: {e}", file=sys.stderr)
     return data
 
 
@@ -100,11 +114,16 @@ def get_watchlist_moves() -> dict[str, float]:
             if pd.isna(prev) or prev == 0:
                 return None
             hist = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
-            if hist.empty:
+            closes_1m = hist["Close"].dropna() if not hist.empty else hist
+            if closes_1m.empty:
                 return None
-            curr = float(hist["Close"].iloc[-1])
-            if pd.isna(curr):
+            # Discard stale quotes: last trade more than 2h old means no live session
+            age = pd.Timestamp.now(tz=closes_1m.index.tz) - closes_1m.index[-1]
+            if age > pd.Timedelta(hours=2):
                 return None
+            # Median of the last few 1-min candles — a single thin-volume trade
+            # can print a wild price; the median smooths it out
+            curr = float(closes_1m.tail(5).median())
             val = round((curr - prev) / prev * 100, 2)
             if abs(val) > 25:
                 print(f"  [warn] {ticker} move {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
@@ -167,43 +186,72 @@ def get_headlines(max_per_feed: int = 30, top_n: int = 20) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Groq
+# Deterministic sections — numbers come straight from fetched data, never the LLM
 # ---------------------------------------------------------------------------
-def build_prompt(market_data: dict, headlines: list[dict], ticker_moves: dict[str, float]) -> str:
-    # Indices
-    index_lines = "\n".join(
-        f"  {name}: ${d['price']:,.2f} ({d['change_pct']:+.2f}%)"
-        for name, d in market_data.items()
-        if name in INDICES
-    )
-
-    # Sector ETFs
-    sector_lines = "\n".join(
-        f"  {name}: ${d['price']:,.2f} ({d['change_pct']:+.2f}%)"
-        for name, d in market_data.items()
-        if name in ("SMH", "XLK")
-    )
-
-    # VIX with mood label
-    vix      = market_data.get("VIX", {})
-    vix_val  = vix.get("price", 0.0)
-    vix_pct  = vix.get("change_pct", 0.0)
-    vix_mood = (
-        "calm"     if vix_val < 15 else
-        "moderate" if vix_val < 25 else
-        "elevated" if vix_val < 35 else
+def _vix_mood(val: float) -> str:
+    return (
+        "calm"     if val < 15 else
+        "moderate" if val < 25 else
+        "elevated" if val < 35 else
         "fearful"
     )
-    vix_line = f"  VIX: {vix_val:.1f} ({vix_pct:+.1f}%) — {vix_mood}"
 
-    # Top movers from watchlist — only true gainers/losers, never a negative under ▲
+
+def _arrow(pct: float) -> str:
+    return "▲" if pct >= 0 else "▼"
+
+
+def build_market_sections(market_data: dict, ticker_moves: dict[str, float]) -> str:
+    """Render Sections 1–2 in Python so every number is exactly what we fetched."""
+    lines = ["<b>📊 Market Pulse</b> <i>(last US close)</i>"]
+    for name in INDICES:
+        d = market_data.get(name)
+        if d:
+            lines.append(f"{_arrow(d['change_pct'])} {html.escape(name)}: {d['price']:,.2f} ({d['change_pct']:+.2f}%)")
+
+    etf_parts = [
+        f"{name} {_arrow(d['change_pct'])} {d['change_pct']:+.2f}%"
+        for name in ("SMH", "XLK")
+        if (d := market_data.get(name))
+    ]
+    if etf_parts:
+        lines.append(" | ".join(etf_parts))
+
+    vix = market_data.get("VIX")
+    if vix:
+        lines.append(f"VIX: {vix['price']:.1f} ({vix['change_pct']:+.1f}%) — {_vix_mood(vix['price'])}")
+
+    lines.append("")
+    lines.append("<b>📈 Premarket Movers</b> <i>(vs prev close)</i>")
     sorted_moves = sorted(ticker_moves.items(), key=lambda x: x[1])
     gainers = [(t, p) for t, p in reversed(sorted_moves) if p > 0][:3]
     losers  = [(t, p) for t, p in sorted_moves if p < 0][:3]
-    gainers_str = " | ".join(f"{t} {p:+.1f}%" for t, p in gainers) or "none"
-    losers_str  = " | ".join(f"{t} {p:+.1f}%" for t, p in losers) or "none"
+    lines.append("▲ " + (" | ".join(f"{t} {p:+.1f}%" for t, p in gainers) or "<i>no gainers in premarket</i>"))
+    lines.append("▼ " + (" | ".join(f"{t} {p:+.1f}%" for t, p in losers) or "<i>no losers in premarket</i>"))
+    return "\n".join(lines)
 
-    # Price lookup table for headline annotation
+
+# ---------------------------------------------------------------------------
+# Groq — only summarizes headlines; all numbers get overwritten afterwards
+# ---------------------------------------------------------------------------
+ANNOTATION_RE = re.compile(r"\(([A-Z]{1,5}),\s*(?:[+-]?\d+(?:[.,]\d+)?\s*%|N/?A|n/a)\)")
+
+
+def enforce_annotations(text: str, ticker_moves: dict[str, float]) -> str:
+    """Overwrite every (TICKER, ±X.X%) the LLM wrote with the real fetched number.
+
+    The LLM is given the price data but still garbles or invents figures;
+    this makes the printed numbers trustworthy regardless.
+    """
+    def fix(m: re.Match) -> str:
+        t = m.group(1)
+        if t in ticker_moves:
+            return f"({t}, {ticker_moves[t]:+.1f}%)"
+        return f"({t}, N/A)"
+    return ANNOTATION_RE.sub(fix, text)
+
+
+def build_prompt(headlines: list[dict], ticker_moves: dict[str, float]) -> str:
     price_ctx = " | ".join(
         f"{t} {p:+.1f}%"
         for t, p in sorted(ticker_moves.items())
@@ -214,22 +262,10 @@ def build_prompt(market_data: dict, headlines: list[dict], ticker_moves: dict[st
     )
     today = datetime.now(timezone.utc).strftime("%A, %B %d %Y")
 
-    return f"""You are a sharp financial analyst writing the evening market brief for {today}.
-Output a Telegram HTML message — no preamble, start directly with section 1.
+    return f"""You are a sharp financial analyst writing the headlines portion of a premarket brief for {today}.
+Output a Telegram HTML message — no preamble, no market summary, start directly with the headlines section.
 
-MARKET DATA (indices):
-{index_lines}
-
-SECTOR ETFs:
-{sector_lines}
-
-{vix_line}
-
-PREMARKET MOVERS (vs previous close):
-  ▲ {gainers_str}
-  ▼ {losers_str}
-
-PRICE DATA (use to annotate headlines — do not list separately):
+PRICE DATA (premarket % vs prev close — use to annotate headlines, do not list separately):
 {price_ctx}
 
 RAW HEADLINES (may include noise — you must filter):
@@ -237,20 +273,7 @@ RAW HEADLINES (may include noise — you must filter):
 
 ---
 
-SECTION 1 — <b>📊 Market Pulse</b>
-- One line per index (S&P 500, Nasdaq, Dow): name, price, % change. Use ▲/▼.
-- One line for sector ETFs: SMH and XLK with % change and ▲/▼.
-- One line for VIX: value, % change, and the mood label ({vix_mood}).
-- End with one punchy sentence on overall market mood.
-
-SECTION 2 — <b>📈 Premarket Movers</b> <i>(vs prev close)</i>
-- Top 3 gainers on one line, top 3 losers on one line, exactly as provided in PREMARKET MOVERS above.
-- Format: ▲ TICKER +X.X% | TICKER +X.X% | TICKER +X.X%
-- Format: ▼ TICKER -X.X% | TICKER -X.X% | TICKER -X.X%
-- If a line says "none", write that line as: ▲ <i>no gainers in premarket</i> (or ▼ <i>no losers in premarket</i>).
-- One closing sentence noting whether semis or tech are leading/lagging in premarket.
-
-SECTION 3 — <b>🔬 Semis + AI Headlines</b>
+SECTION — <b>🔬 Semis + AI Headlines</b>
 STRICT FILTERING RULES:
   • INCLUDE a headline if it names a specific company.
   • REJECT only headlines that name NO specific company at all.
@@ -260,15 +283,18 @@ STRICT FILTERING RULES:
 For each headline that passes, write exactly one line using this EXACT format — no exceptions:
 📌 <b>Company (TICKER, MOVE):</b> [what happened] — [why it matters]
   - TICKER: the stock ticker symbol, e.g. NVDA, MU, TSM
-  - MOVE: find the ticker in PRICE DATA and write the premarket % vs prev close, e.g. +4.2% or -1.8%. If the ticker is not in PRICE DATA write N/A.
+  - MOVE: find the ticker in PRICE DATA and copy its % exactly. If the ticker is not in PRICE DATA write N/A.
   - NEVER omit TICKER or MOVE. NEVER write "no move". Always write N/A if data is missing.
   - Keep the explanation after the dash under 20 words.
-  - CRITICAL: Do NOT invert or paraphrase buy/sell/upgrade/downgrade direction. If the headline says "bought", write bought. If it says "sold", write sold. Copy the action exactly.
+  - ACCURACY RULES (highest priority):
+    • Do NOT invert buy/sell/upgrade/downgrade direction. Copy the action word from the headline exactly.
+    • Do NOT add facts that are not in the headline. No speculation about reasons or amounts.
+    • If a headline is ambiguous, restate it conservatively rather than interpreting it.
 
-SECTION 4 — <b>👀 One Thing To Watch</b>
-- Pick the single highest-conviction catalyst from section 3.
-- Must name the company, ticker, its day move from PRICE DATA, and a specific reason why it matters TODAY.
-- If section 3 had no catalysts: <i>No single standout catalyst today — wait for tomorrow's open.</i>
+SECTION — <b>👀 One Thing To Watch</b>
+- Pick the single highest-conviction catalyst from the headlines section.
+- Name the company and ticker with its move in the same (TICKER, MOVE) format, and say why it matters TODAY using only facts from the headline.
+- If there were no catalysts: <i>No single standout catalyst today — wait for the open.</i>
 - Max 3 sentences.
 
 ---
@@ -276,7 +302,7 @@ SECTION 4 — <b>👀 One Thing To Watch</b>
 FORMATTING RULES:
 - Telegram HTML only: <b>bold</b>, <i>italic</i> — NO asterisks, NO markdown
 - Tone: direct, like a friend who trades
-- Total message under 4000 characters
+- Total output under 2500 characters
 """
 
 
@@ -357,8 +383,11 @@ def main() -> None:
         print(f"    - {h['title'][:80]}")
 
     print("  Calling Groq (llama-3.3-70b-versatile)...")
-    prompt = build_prompt(market_data, headlines, ticker_moves)
-    brief  = call_groq(prompt)
+    prompt   = build_prompt(headlines, ticker_moves)
+    llm_part = enforce_annotations(call_groq(prompt), ticker_moves)
+
+    # Sections 1–2 are rendered in Python so the numbers can't be garbled
+    brief = build_market_sections(market_data, ticker_moves) + "\n\n" + llm_part
     print(f"  Brief length: {len(brief)} chars")
 
     print("  Sending to Telegram...")
