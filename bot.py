@@ -1,9 +1,9 @@
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import feedparser
-import pandas as pd
 import requests
 import yfinance as yf
 from groq import Groq
@@ -73,26 +73,32 @@ def get_market_data() -> dict:
 
 
 def get_watchlist_moves() -> dict[str, float]:
-    """Batch-fetch today's % change for all watchlist tickers."""
-    try:
-        raw    = yf.download(WATCHLIST, period="5d", progress=False, auto_adjust=True)
-        closes = raw["Close"].dropna(how="all")
-        if len(closes) < 2:
-            return {}
-        pct = (closes.iloc[-1] - closes.iloc[-2]) / closes.iloc[-2] * 100
-        moves = {}
-        for t in WATCHLIST:
-            if t not in pct.index or pd.isna(pct[t]):
-                continue
-            val = round(float(pct[t]), 2)
+    def _fetch(ticker: str) -> tuple[str, float] | None:
+        try:
+            fi         = yf.Ticker(ticker).fast_info
+            current    = fi.last_price
+            prev_close = fi.previous_close
+            if not current or not prev_close:
+                return None
+            val = round((current - prev_close) / prev_close * 100, 2)
             if abs(val) > 25:
-                print(f"  [warn] {t} move of {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
-                continue
-            moves[t] = val
-        return moves
+                print(f"  [warn] {ticker} move of {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
+                return None
+            return ticker, val
+        except Exception as e:
+            print(f"  [warn] Could not fetch {ticker}: {e}", file=sys.stderr)
+            return None
+
+    moves: dict[str, float] = {}
+    try:
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            for result in as_completed({ex.submit(_fetch, t): t for t in WATCHLIST}):
+                item = result.result()
+                if item:
+                    moves[item[0]] = item[1]
     except Exception as e:
-        print(f"  [warn] Could not fetch watchlist moves: {e}", file=sys.stderr)
-        return {}
+        print(f"  [warn] Watchlist fetch failed: {e}", file=sys.stderr)
+    return moves
 
 
 # ---------------------------------------------------------------------------
