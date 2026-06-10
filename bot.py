@@ -3,6 +3,7 @@ import sys
 from datetime import datetime
 
 import feedparser
+import pandas as pd
 import requests
 import yfinance as yf
 from groq import Groq
@@ -19,6 +20,19 @@ INDICES = {
     "Nasdaq":  "^IXIC",
     "Dow":     "^DJI",
 }
+
+SECTORS = {
+    "SMH": "SMH",   # VanEck Semiconductor ETF
+    "XLK": "XLK",   # Tech Select Sector SPDR
+    "VIX": "^VIX",  # CBOE Volatility Index
+}
+
+WATCHLIST = [
+    "NVDA", "AMD",  "MU",   "MRVL", "INTC", "AMAT",
+    "AAPL", "MSFT", "GOOGL","META", "AMZN", "TSLA", "ORCL", "ARM", "AVGO", "QCOM",
+    "TSM",  "ASML", "LRCX", "KLAC", "TSEM", "TXN",  "SWKS", "ONTO", "WOLF", "SLAB",
+    "SMCI", "HPE",  "DELL", "CDNS", "SNPS", "MCHP", "ADI",  "NXPI", "ON",   "STM",
+]
 
 RSS_FEEDS = [
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,AMD,MU,MRVL,INTC,AMAT&region=US&lang=en-US",
@@ -45,21 +59,35 @@ SEMI_AI_KEYWORDS = [
 # ---------------------------------------------------------------------------
 def get_market_data() -> dict:
     data = {}
-    for name, ticker in INDICES.items():
+    for name, ticker in {**INDICES, **SECTORS}.items():
         try:
-            t          = yf.Ticker(ticker)
-            fi         = t.fast_info
+            fi         = yf.Ticker(ticker).fast_info
             current    = fi.last_price
             prev_close = fi.previous_close
-            if prev_close and prev_close != 0:
-                change_pct = (current - prev_close) / prev_close * 100
-            else:
-                change_pct = 0.0
+            change_pct = (current - prev_close) / prev_close * 100 if prev_close else 0.0
             data[name] = {"price": float(current), "change_pct": float(change_pct)}
         except Exception as e:
             print(f"  [warn] Could not fetch {ticker}: {e}", file=sys.stderr)
             data[name] = {"price": 0.0, "change_pct": 0.0}
     return data
+
+
+def get_watchlist_moves() -> dict[str, float]:
+    """Batch-fetch today's % change for all watchlist tickers."""
+    try:
+        raw    = yf.download(WATCHLIST, period="5d", progress=False, auto_adjust=True)
+        closes = raw["Close"].dropna(how="all")
+        if len(closes) < 2:
+            return {}
+        pct = (closes.iloc[-1] - closes.iloc[-2]) / closes.iloc[-2] * 100
+        return {
+            t: round(float(pct[t]), 2)
+            for t in WATCHLIST
+            if t in pct.index and pd.notna(pct[t])
+        }
+    except Exception as e:
+        print(f"  [warn] Could not fetch watchlist moves: {e}", file=sys.stderr)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +106,6 @@ def get_headlines(max_per_feed: int = 30, top_n: int = 20) -> list[dict]:
         except Exception as e:
             print(f"  [warn] RSS fetch failed for {url}: {e}", file=sys.stderr)
 
-    # Prefer headlines that mention semiconductors or AI
     seen: set[str] = set()
     relevant: list[dict] = []
     fallback: list[dict] = []
@@ -93,18 +120,52 @@ def get_headlines(max_per_feed: int = 30, top_n: int = 20) -> list[dict]:
         else:
             fallback.append(h)
 
-    combined = relevant + fallback
-    return combined[:top_n]
+    return (relevant + fallback)[:top_n]
 
 
 # ---------------------------------------------------------------------------
 # Groq
 # ---------------------------------------------------------------------------
-def build_prompt(market_data: dict, headlines: list[dict]) -> str:
-    market_lines = "\n".join(
+def build_prompt(market_data: dict, headlines: list[dict], ticker_moves: dict[str, float]) -> str:
+    # Indices
+    index_lines = "\n".join(
         f"  {name}: ${d['price']:,.2f} ({d['change_pct']:+.2f}%)"
         for name, d in market_data.items()
+        if name in INDICES
     )
+
+    # Sector ETFs
+    sector_lines = "\n".join(
+        f"  {name}: ${d['price']:,.2f} ({d['change_pct']:+.2f}%)"
+        for name, d in market_data.items()
+        if name in ("SMH", "XLK")
+    )
+
+    # VIX with mood label
+    vix      = market_data.get("VIX", {})
+    vix_val  = vix.get("price", 0.0)
+    vix_pct  = vix.get("change_pct", 0.0)
+    vix_mood = (
+        "calm"     if vix_val < 15 else
+        "moderate" if vix_val < 25 else
+        "elevated" if vix_val < 35 else
+        "fearful"
+    )
+    vix_line = f"  VIX: {vix_val:.1f} ({vix_pct:+.1f}%) — {vix_mood}"
+
+    # Top movers from watchlist
+    sorted_moves = sorted(ticker_moves.items(), key=lambda x: x[1])
+    gainers = sorted_moves[-3:][::-1]
+    losers  = sorted_moves[:3]
+    gainers_str = " | ".join(f"{t} {p:+.1f}%" for t, p in gainers)
+    losers_str  = " | ".join(f"{t} {p:+.1f}%" for t, p in losers)
+
+    # Price lookup table for headline annotation
+    price_ctx = " | ".join(
+        f"{t} {p:+.1f}%"
+        for t, p in sorted(ticker_moves.items())
+    )
+
     headline_lines = "\n".join(
         f"  {i+1}. {h['title']}" for i, h in enumerate(headlines)
     )
@@ -113,8 +174,20 @@ def build_prompt(market_data: dict, headlines: list[dict]) -> str:
     return f"""You are a sharp financial analyst writing the evening market brief for {today}.
 Output a Telegram HTML message — no preamble, start directly with section 1.
 
-MARKET DATA:
-{market_lines}
+MARKET DATA (indices):
+{index_lines}
+
+SECTOR ETFs:
+{sector_lines}
+
+{vix_line}
+
+WATCHLIST TOP MOVERS TODAY:
+  ▲ {gainers_str}
+  ▼ {losers_str}
+
+PRICE DATA (use to annotate headlines — do not list separately):
+{price_ctx}
 
 RAW HEADLINES (may include noise — you must filter):
 {headline_lines}
@@ -122,36 +195,41 @@ RAW HEADLINES (may include noise — you must filter):
 ---
 
 SECTION 1 — <b>📊 Market Pulse</b>
-- One line per index: name, price, % change. Use ▲ for positive, ▼ for negative.
+- One line per index (S&P 500, Nasdaq, Dow): name, price, % change. Use ▲/▼.
+- One line for sector ETFs: SMH and XLK with % change and ▲/▼.
+- One line for VIX: value, % change, and the mood label ({vix_mood}).
 - End with one punchy sentence on overall market mood.
 
-SECTION 2 — <b>🔬 Semis + AI Headlines</b>
-STRICT FILTERING RULES — apply before writing anything:
-  • INCLUDE a headline if it names a specific company — even if the ticker is not in the list below, use your knowledge to identify it.
-    Reference tickers: NVDA, AMD, INTC, MU, MRVL, AMAT, ASML, QCOM, AVGO, TSM, TSEM, AAPL, MSFT, GOOGL, META, AMZN, TSLA, ORCL, ARM, LRCX, KLAC, TXN, ADI, NXPI, ON, MCHP, SMCI, DELL, HPE, CDNS, SNPS, SWKS.
-  • Do NOT skip a headline just because the ticker is not in that list — if you know the company's ticker, include it.
-  • REJECT only headlines that name NO specific company at all (e.g. "AI stocks could rise", "semiconductor sector faces headwinds").
-  • You will receive up to 20 raw headlines. Include every one that names a specific company, up to 10 in the output.
-  • If fewer than 3 headlines pass the filter, include only the ones that do.
-  • If ZERO headlines pass the filter, write exactly: <i>No strong catalysts found today.</i>
+SECTION 2 — <b>📈 Watchlist Movers</b>
+- Top 3 gainers on one line, top 3 losers on one line, exactly as provided in WATCHLIST TOP MOVERS above.
+- Format: ▲ TICKER +X.X% | TICKER +X.X% | TICKER +X.X%
+- Format: ▼ TICKER -X.X% | TICKER -X.X% | TICKER -X.X%
+- One closing sentence noting whether semis or tech led/lagged today overall.
 
-For each headline that passes, write exactly one line in this format:
-📌 <b>Company (TICKER):</b> [what happened] — [why it matters for the stock, in plain English]
-Keep each line under 20 words after the dash.
+SECTION 3 — <b>🔬 Semis + AI Headlines</b>
+STRICT FILTERING RULES:
+  • INCLUDE a headline if it names a specific company.
+  • REJECT only headlines that name NO specific company at all.
+  • Include every headline that passes, up to 10.
+  • If ZERO pass, write: <i>No strong catalysts found today.</i>
 
-SECTION 3 — <b>👀 One Thing To Watch</b>
-- Pick the single highest-conviction catalyst from section 2.
-- Must include: the company name, its ticker, a specific price or % move if available from the market data or headlines.
-- Must give a concrete, specific reason why it matters TODAY — not a generic "AI is a tailwind" take.
-- If section 2 had no strong catalysts, write: <i>No single standout catalyst today — wait for tomorrow's open.</i>
+For each headline that passes, write exactly one line:
+📌 <b>Company (TICKER, DAY_MOVE):</b> [what happened] — [why it matters for the stock]
+  - DAY_MOVE: look up the ticker in PRICE DATA above and append as e.g. +4.2% or -1.8%. If not found, omit.
+  - Keep the explanation after the dash under 20 words.
+
+SECTION 4 — <b>👀 One Thing To Watch</b>
+- Pick the single highest-conviction catalyst from section 3.
+- Must name the company, ticker, its day move from PRICE DATA, and a specific reason why it matters TODAY.
+- If section 3 had no catalysts: <i>No single standout catalyst today — wait for tomorrow's open.</i>
 - Max 3 sentences.
 
 ---
 
 FORMATTING RULES:
-- Telegram HTML only: <b>bold</b>, <i>italic</i> — NO asterisks, NO markdown, NO ** syntax
-- Tone: direct, like a friend who trades — not a press release
-- Total message under 3800 characters
+- Telegram HTML only: <b>bold</b>, <i>italic</i> — NO asterisks, NO markdown
+- Tone: direct, like a friend who trades
+- Total message under 4000 characters
 """
 
 
@@ -161,7 +239,7 @@ def call_groq(prompt: str) -> str:
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
-        max_tokens=1500,
+        max_tokens=1800,
     )
     return resp.choices[0].message.content.strip()
 
@@ -192,7 +270,13 @@ def main() -> None:
     print("  Fetching market data...")
     market_data = get_market_data()
     for name, d in market_data.items():
-        print(f"    {name}: ${d['price']:,.2f} ({d['change_pct']:+.2f}%)")
+        print(f"    {name}: {d['price']:,.2f} ({d['change_pct']:+.2f}%)")
+
+    print("  Fetching watchlist moves...")
+    ticker_moves = get_watchlist_moves()
+    sorted_moves = sorted(ticker_moves.items(), key=lambda x: x[1])
+    for t, p in sorted_moves[-3:][::-1] + sorted_moves[:3]:
+        print(f"    {t}: {p:+.2f}%")
 
     print("  Fetching RSS headlines...")
     headlines = get_headlines()
@@ -200,7 +284,7 @@ def main() -> None:
         print(f"    - {h['title'][:80]}")
 
     print("  Calling Groq (llama-3.3-70b-versatile)...")
-    prompt = build_prompt(market_data, headlines)
+    prompt = build_prompt(market_data, headlines, ticker_moves)
     brief  = call_groq(prompt)
     print(f"  Brief length: {len(brief)} chars")
 
