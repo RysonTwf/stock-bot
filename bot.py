@@ -80,11 +80,16 @@ def get_watchlist_moves() -> dict[str, float]:
         if len(closes) < 2:
             return {}
         pct = (closes.iloc[-1] - closes.iloc[-2]) / closes.iloc[-2] * 100
-        return {
-            t: round(float(pct[t]), 2)
-            for t in WATCHLIST
-            if t in pct.index and pd.notna(pct[t])
-        }
+        moves = {}
+        for t in WATCHLIST:
+            if t not in pct.index or pd.isna(pct[t]):
+                continue
+            val = round(float(pct[t]), 2)
+            if abs(val) > 25:
+                print(f"  [warn] {t} move of {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
+                continue
+            moves[t] = val
+        return moves
     except Exception as e:
         print(f"  [warn] Could not fetch watchlist moves: {e}", file=sys.stderr)
         return {}
@@ -182,7 +187,7 @@ SECTOR ETFs:
 
 {vix_line}
 
-WATCHLIST TOP MOVERS TODAY:
+LAST US SESSION — WATCHLIST MOVERS:
   ▲ {gainers_str}
   ▼ {losers_str}
 
@@ -200,11 +205,11 @@ SECTION 1 — <b>📊 Market Pulse</b>
 - One line for VIX: value, % change, and the mood label ({vix_mood}).
 - End with one punchy sentence on overall market mood.
 
-SECTION 2 — <b>📈 Watchlist Movers</b>
-- Top 3 gainers on one line, top 3 losers on one line, exactly as provided in WATCHLIST TOP MOVERS above.
+SECTION 2 — <b>📈 Last Session Movers</b>
+- Top 3 gainers on one line, top 3 losers on one line, exactly as provided in LAST US SESSION above.
 - Format: ▲ TICKER +X.X% | TICKER +X.X% | TICKER +X.X%
 - Format: ▼ TICKER -X.X% | TICKER -X.X% | TICKER -X.X%
-- One closing sentence noting whether semis or tech led/lagged today overall.
+- One closing sentence noting whether semis or tech led/lagged last session overall.
 
 SECTION 3 — <b>🔬 Semis + AI Headlines</b>
 STRICT FILTERING RULES:
