@@ -64,7 +64,7 @@ def get_market_data() -> dict:
         try:
             fi         = yf.Ticker(ticker).fast_info
             current    = fi.last_price
-            prev_close = fi.previous_close
+            prev_close = fi.regular_market_previous_close  # previous_close is stale/wrong
             change_pct = (current - prev_close) / prev_close * 100 if prev_close else 0.0
             data[name] = {"price": float(current), "change_pct": float(change_pct)}
         except Exception as e:
@@ -80,9 +80,12 @@ def get_watchlist_moves() -> dict[str, float]:
         daily = yf.download(WATCHLIST, period="5d", interval="1d",
                             progress=False, auto_adjust=True)
         closes = daily["Close"].dropna(how="all")
-        last_idx = closes.index[-1]
-        last_date = last_idx.date() if hasattr(last_idx, "date") else last_idx
-        prev_closes = closes.iloc[-2] if last_date == date.today() else closes.iloc[-1]
+        # Drop any partial row for today so iloc[-1] is always the last completed session
+        closes = closes[closes.index.normalize().date < date.today()]
+        if closes.empty:
+            print("  [warn] No completed daily session data", file=sys.stderr)
+            return {}
+        prev_closes = closes.iloc[-1]
     except Exception as e:
         print(f"  [warn] Could not fetch daily closes: {e}", file=sys.stderr)
         return {}
@@ -111,9 +114,12 @@ def get_watchlist_moves() -> dict[str, float]:
     moves: dict[str, float] = {}
     with ThreadPoolExecutor(max_workers=10) as ex:
         for fut in as_completed({ex.submit(_fetch_current, t): t for t in WATCHLIST}):
-            item = fut.result()
-            if item:
-                moves[item[0]] = item[1]
+            try:
+                item = fut.result()
+                if item:
+                    moves[item[0]] = item[1]
+            except Exception as e:
+                print(f"  [warn] Watchlist future failed: {e}", file=sys.stderr)
     return moves
 
 
