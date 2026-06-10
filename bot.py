@@ -1,5 +1,6 @@
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date
 
 import feedparser
@@ -74,43 +75,46 @@ def get_market_data() -> dict:
 
 def get_watchlist_moves() -> dict[str, float]:
     """Return premarket % change vs previous close for each watchlist ticker."""
+    # Step 1: batch-fetch previous closes (reliable with daily interval)
     try:
-        # Previous close: last completed daily session
         daily = yf.download(WATCHLIST, period="5d", interval="1d",
                             progress=False, auto_adjust=True)
         closes = daily["Close"].dropna(how="all")
-        # During premarket the last row is yesterday; if today's partial row
-        # somehow appears, fall back to the one before it
         last_idx = closes.index[-1]
         last_date = last_idx.date() if hasattr(last_idx, "date") else last_idx
         prev_closes = closes.iloc[-2] if last_date == date.today() else closes.iloc[-1]
-
-        # Current premarket price: latest 1-min candle with pre/post-market included
-        intraday = yf.download(WATCHLIST, period="1d", interval="1m",
-                               prepost=True, progress=False, auto_adjust=True)
-        if intraday.empty:
-            print("  [warn] No intraday premarket data returned", file=sys.stderr)
-            return {}
-        current_prices = intraday["Close"].iloc[-1]
-
-        moves = {}
-        for t in WATCHLIST:
-            try:
-                prev = float(prev_closes[t])
-                curr = float(current_prices[t])
-                if not prev or not curr or pd.isna(prev) or pd.isna(curr):
-                    continue
-                val = round((curr - prev) / prev * 100, 2)
-                if abs(val) > 25:
-                    print(f"  [warn] {t} move {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
-                    continue
-                moves[t] = val
-            except (KeyError, ValueError, TypeError):
-                continue
-        return moves
     except Exception as e:
-        print(f"  [warn] Watchlist fetch failed: {e}", file=sys.stderr)
+        print(f"  [warn] Could not fetch daily closes: {e}", file=sys.stderr)
         return {}
+
+    # Step 2: per-ticker 1-min history with prepost — batch download misses many tickers
+    def _fetch_current(ticker: str) -> tuple[str, float] | None:
+        try:
+            prev = float(prev_closes.get(ticker, float("nan")))
+            if pd.isna(prev) or prev == 0:
+                return None
+            hist = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
+            if hist.empty:
+                return None
+            curr = float(hist["Close"].iloc[-1])
+            if pd.isna(curr):
+                return None
+            val = round((curr - prev) / prev * 100, 2)
+            if abs(val) > 25:
+                print(f"  [warn] {ticker} move {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
+                return None
+            return ticker, val
+        except Exception as e:
+            print(f"  [warn] Could not fetch {ticker}: {e}", file=sys.stderr)
+            return None
+
+    moves: dict[str, float] = {}
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        for fut in as_completed({ex.submit(_fetch_current, t): t for t in WATCHLIST}):
+            item = fut.result()
+            if item:
+                moves[item[0]] = item[1]
+    return moves
 
 
 # ---------------------------------------------------------------------------
