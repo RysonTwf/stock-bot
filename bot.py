@@ -1,7 +1,10 @@
+import html
 import os
+import re
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 import feedparser
 import pandas as pd
@@ -139,15 +142,22 @@ def get_headlines(max_per_feed: int = 30, top_n: int = 20) -> list[dict]:
         except Exception as e:
             print(f"  [warn] RSS fetch failed for {url}: {e}", file=sys.stderr)
 
-    seen: set[str] = set()
+    def _words(title: str) -> set[str]:
+        return set(re.findall(r"[a-z]{3,}", title.lower()))
+
+    kept_words: list[set[str]] = []
     relevant: list[dict] = []
     fallback: list[dict] = []
 
     for h in all_headlines:
         title_lower = " " + h["title"].lower() + " "
-        if h["title"] in seen:
+        words = _words(h["title"])
+        # Skip near-duplicates: same story rewritten by another outlet
+        if words and any(
+            len(words & kw) / len(words | kw) > 0.6 for kw in kept_words
+        ):
             continue
-        seen.add(h["title"])
+        kept_words.append(words)
         if any(kw in title_lower for kw in SEMI_AI_KEYWORDS):
             relevant.append(h)
         else:
@@ -186,12 +196,12 @@ def build_prompt(market_data: dict, headlines: list[dict], ticker_moves: dict[st
     )
     vix_line = f"  VIX: {vix_val:.1f} ({vix_pct:+.1f}%) — {vix_mood}"
 
-    # Top movers from watchlist
+    # Top movers from watchlist — only true gainers/losers, never a negative under ▲
     sorted_moves = sorted(ticker_moves.items(), key=lambda x: x[1])
-    gainers = sorted_moves[-3:][::-1]
-    losers  = sorted_moves[:3]
-    gainers_str = " | ".join(f"{t} {p:+.1f}%" for t, p in gainers)
-    losers_str  = " | ".join(f"{t} {p:+.1f}%" for t, p in losers)
+    gainers = [(t, p) for t, p in reversed(sorted_moves) if p > 0][:3]
+    losers  = [(t, p) for t, p in sorted_moves if p < 0][:3]
+    gainers_str = " | ".join(f"{t} {p:+.1f}%" for t, p in gainers) or "none"
+    losers_str  = " | ".join(f"{t} {p:+.1f}%" for t, p in losers) or "none"
 
     # Price lookup table for headline annotation
     price_ctx = " | ".join(
@@ -202,7 +212,7 @@ def build_prompt(market_data: dict, headlines: list[dict], ticker_moves: dict[st
     headline_lines = "\n".join(
         f"  {i+1}. {h['title']}" for i, h in enumerate(headlines)
     )
-    today = datetime.utcnow().strftime("%A, %B %d %Y")
+    today = datetime.now(timezone.utc).strftime("%A, %B %d %Y")
 
     return f"""You are a sharp financial analyst writing the evening market brief for {today}.
 Output a Telegram HTML message — no preamble, start directly with section 1.
@@ -234,9 +244,10 @@ SECTION 1 — <b>📊 Market Pulse</b>
 - End with one punchy sentence on overall market mood.
 
 SECTION 2 — <b>📈 Premarket Movers</b> <i>(vs prev close)</i>
-- Top 3 gainers on one line, top 3 losers on one line, exactly as provided in LAST US SESSION above.
+- Top 3 gainers on one line, top 3 losers on one line, exactly as provided in PREMARKET MOVERS above.
 - Format: ▲ TICKER +X.X% | TICKER +X.X% | TICKER +X.X%
 - Format: ▼ TICKER -X.X% | TICKER -X.X% | TICKER -X.X%
+- If a line says "none", write that line as: ▲ <i>no gainers in premarket</i> (or ▼ <i>no losers in premarket</i>).
 - One closing sentence noting whether semis or tech are leading/lagging in premarket.
 
 SECTION 3 — <b>🔬 Semis + AI Headlines</b>
@@ -269,22 +280,36 @@ FORMATTING RULES:
 """
 
 
-def call_groq(prompt: str) -> str:
+def call_groq(prompt: str, retries: int = 3) -> str:
     client = Groq(api_key=GROQ_API_KEY)
-    resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=1800,
-    )
-    return resp.choices[0].message.content.strip()
+    for attempt in range(1, retries + 1):
+        try:
+            resp = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=1800,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            if attempt == retries:
+                raise
+            print(f"  [warn] Groq attempt {attempt} failed: {e} — retrying...", file=sys.stderr)
+            time.sleep(2 * attempt)
+    raise RuntimeError("unreachable")
 
 
 # ---------------------------------------------------------------------------
 # Telegram
 # ---------------------------------------------------------------------------
 def send_telegram(message: str, chat_id: str | None = None) -> dict:
-    url     = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    # Telegram hard limit is 4096 chars — truncate at a line break to keep HTML tags intact
+    if len(message) > 4000:
+        cut = message.rfind("\n", 0, 4000)
+        message = message[: cut if cut > 0 else 4000] + "\n…"
+
     payload = {
         "chat_id":                  chat_id or TELEGRAM_CHAT_ID,
         "text":                     message,
@@ -292,6 +317,18 @@ def send_telegram(message: str, chat_id: str | None = None) -> dict:
         "disable_web_page_preview": True,
     }
     resp = requests.post(url, json=payload, timeout=30)
+
+    # LLM occasionally emits malformed HTML that Telegram rejects — degrade to plain text
+    if resp.status_code == 400:
+        print(f"  [warn] Telegram rejected HTML ({resp.text[:200]}) — retrying as plain text", file=sys.stderr)
+        plain = re.sub(r"</?(b|i|u|s|a|code|pre)\b[^>]*>", "", message)
+        payload = {
+            "chat_id":                  chat_id or TELEGRAM_CHAT_ID,
+            "text":                     html.unescape(plain),
+            "disable_web_page_preview": True,
+        }
+        resp = requests.post(url, json=payload, timeout=30)
+
     resp.raise_for_status()
     return resp.json()
 
@@ -300,7 +337,7 @@ def send_telegram(message: str, chat_id: str | None = None) -> dict:
 # Main
 # ---------------------------------------------------------------------------
 def main() -> None:
-    ts = datetime.utcnow().isoformat(timespec="seconds")
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[{ts}] Starting daily brief...")
 
     print("  Fetching market data...")
@@ -331,4 +368,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        # Tell the chat the brief failed instead of silently sending nothing
+        try:
+            send_telegram(f"⚠️ Daily brief failed: {html.escape(str(e)[:300])}")
+        except Exception:
+            pass
+        raise

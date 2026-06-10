@@ -72,6 +72,12 @@ def webhook():
     chat_id = str(message["chat"]["id"])
     text    = message.get("text", "").strip()
 
+    if text.startswith("/start") or text.startswith("/help"):
+        _ack(chat_id,
+             "👋 I post a daily market brief every weekday automatically.\n"
+             "Send /brief to get one on demand (limit 5/hour).")
+        return "ok"
+
     if text.startswith("/brief"):
         now     = time.time()
         window  = now - 3600
