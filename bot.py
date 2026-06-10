@@ -236,9 +236,11 @@ STRICT FILTERING RULES:
   • Include every headline that passes, up to 10.
   • If ZERO pass, write: <i>No strong catalysts found today.</i>
 
-For each headline that passes, write exactly one line:
-📌 <b>Company (TICKER, DAY_MOVE):</b> [what happened] — [why it matters for the stock]
-  - DAY_MOVE: look up the ticker in PRICE DATA above and append as e.g. +4.2% or -1.8% (premarket vs prev close). If not found, omit.
+For each headline that passes, write exactly one line using this EXACT format — no exceptions:
+📌 <b>Company (TICKER, MOVE):</b> [what happened] — [why it matters]
+  - TICKER: the stock ticker symbol, e.g. NVDA, MU, TSM
+  - MOVE: find the ticker in PRICE DATA and write the premarket % vs prev close, e.g. +4.2% or -1.8%. If the ticker is not in PRICE DATA write N/A.
+  - NEVER omit TICKER or MOVE. NEVER write "no move". Always write N/A if data is missing.
   - Keep the explanation after the dash under 20 words.
 
 SECTION 4 — <b>👀 One Thing To Watch</b>
