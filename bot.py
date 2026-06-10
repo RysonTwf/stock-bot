@@ -252,6 +252,7 @@ For each headline that passes, write exactly one line using this EXACT format �
   - MOVE: find the ticker in PRICE DATA and write the premarket % vs prev close, e.g. +4.2% or -1.8%. If the ticker is not in PRICE DATA write N/A.
   - NEVER omit TICKER or MOVE. NEVER write "no move". Always write N/A if data is missing.
   - Keep the explanation after the dash under 20 words.
+  - CRITICAL: Do NOT invert or paraphrase buy/sell/upgrade/downgrade direction. If the headline says "bought", write bought. If it says "sold", write sold. Copy the action exactly.
 
 SECTION 4 — <b>👀 One Thing To Watch</b>
 - Pick the single highest-conviction catalyst from section 3.
