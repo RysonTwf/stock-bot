@@ -1,9 +1,9 @@
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, date
 
 import feedparser
+import pandas as pd
 import requests
 import yfinance as yf
 from groq import Groq
@@ -73,32 +73,44 @@ def get_market_data() -> dict:
 
 
 def get_watchlist_moves() -> dict[str, float]:
-    def _fetch(ticker: str) -> tuple[str, float] | None:
-        try:
-            fi         = yf.Ticker(ticker).fast_info
-            current    = fi.last_price
-            prev_close = fi.previous_close
-            if not current or not prev_close:
-                return None
-            val = round((current - prev_close) / prev_close * 100, 2)
-            if abs(val) > 25:
-                print(f"  [warn] {ticker} move of {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
-                return None
-            return ticker, val
-        except Exception as e:
-            print(f"  [warn] Could not fetch {ticker}: {e}", file=sys.stderr)
-            return None
-
-    moves: dict[str, float] = {}
+    """Return premarket % change vs previous close for each watchlist ticker."""
     try:
-        with ThreadPoolExecutor(max_workers=10) as ex:
-            for result in as_completed({ex.submit(_fetch, t): t for t in WATCHLIST}):
-                item = result.result()
-                if item:
-                    moves[item[0]] = item[1]
+        # Previous close: last completed daily session
+        daily = yf.download(WATCHLIST, period="5d", interval="1d",
+                            progress=False, auto_adjust=True)
+        closes = daily["Close"].dropna(how="all")
+        # During premarket the last row is yesterday; if today's partial row
+        # somehow appears, fall back to the one before it
+        last_idx = closes.index[-1]
+        last_date = last_idx.date() if hasattr(last_idx, "date") else last_idx
+        prev_closes = closes.iloc[-2] if last_date == date.today() else closes.iloc[-1]
+
+        # Current premarket price: latest 1-min candle with pre/post-market included
+        intraday = yf.download(WATCHLIST, period="1d", interval="1m",
+                               prepost=True, progress=False, auto_adjust=True)
+        if intraday.empty:
+            print("  [warn] No intraday premarket data returned", file=sys.stderr)
+            return {}
+        current_prices = intraday["Close"].iloc[-1]
+
+        moves = {}
+        for t in WATCHLIST:
+            try:
+                prev = float(prev_closes[t])
+                curr = float(current_prices[t])
+                if not prev or not curr or pd.isna(prev) or pd.isna(curr):
+                    continue
+                val = round((curr - prev) / prev * 100, 2)
+                if abs(val) > 25:
+                    print(f"  [warn] {t} move {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
+                    continue
+                moves[t] = val
+            except (KeyError, ValueError, TypeError):
+                continue
+        return moves
     except Exception as e:
         print(f"  [warn] Watchlist fetch failed: {e}", file=sys.stderr)
-    return moves
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +205,7 @@ SECTOR ETFs:
 
 {vix_line}
 
-LAST US SESSION — WATCHLIST MOVERS:
+PREMARKET MOVERS (vs previous close):
   ▲ {gainers_str}
   ▼ {losers_str}
 
@@ -211,11 +223,11 @@ SECTION 1 — <b>📊 Market Pulse</b>
 - One line for VIX: value, % change, and the mood label ({vix_mood}).
 - End with one punchy sentence on overall market mood.
 
-SECTION 2 — <b>📈 Last Session Movers</b>
+SECTION 2 — <b>📈 Premarket Movers</b> <i>(vs prev close)</i>
 - Top 3 gainers on one line, top 3 losers on one line, exactly as provided in LAST US SESSION above.
 - Format: ▲ TICKER +X.X% | TICKER +X.X% | TICKER +X.X%
 - Format: ▼ TICKER -X.X% | TICKER -X.X% | TICKER -X.X%
-- One closing sentence noting whether semis or tech led/lagged last session overall.
+- One closing sentence noting whether semis or tech are leading/lagging in premarket.
 
 SECTION 3 — <b>🔬 Semis + AI Headlines</b>
 STRICT FILTERING RULES:
@@ -226,7 +238,7 @@ STRICT FILTERING RULES:
 
 For each headline that passes, write exactly one line:
 📌 <b>Company (TICKER, DAY_MOVE):</b> [what happened] — [why it matters for the stock]
-  - DAY_MOVE: look up the ticker in PRICE DATA above and append as e.g. +4.2% or -1.8%. If not found, omit.
+  - DAY_MOVE: look up the ticker in PRICE DATA above and append as e.g. +4.2% or -1.8% (premarket vs prev close). If not found, omit.
   - Keep the explanation after the dash under 20 words.
 
 SECTION 4 — <b>👀 One Thing To Watch</b>
