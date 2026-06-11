@@ -16,6 +16,8 @@ Also supports on-demand Telegram commands via a Flask webhook hosted on PythonAn
 | `/watchlist` | Live prices for the watchlist — works during pre-market and after-hours too |
 | `/help` | List all commands |
 
+After the US close, watchlist lines split the move into the regular-session change and the after-hours change, e.g. `▲ NVDA: 201.50 (day +1.20%, AH +0.45%)`. Quotes are fetched via yfinance with a direct Yahoo chart-API fallback, and previous closes are cached for the day to cut request volume.
+
 The watchlist is shared by everyone in the group (single-group bot). It is stored as `watchlist.json` in this repo: the webhook commits changes via the GitHub API, and the daily brief picks the file up automatically on its next run, showing a **⭐ Watchlist** section with live prices.
 
 ---
