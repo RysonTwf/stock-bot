@@ -2,7 +2,21 @@
 
 A Telegram bot that sends a market briefing every weekday at 7:00 PM SGT (11:00 UTC), covering S&P 500, Nasdaq, Dow, plus top semiconductor and AI/Big Tech headlines summarised by Groq's LLaMA 3.3 70B.
 
-Also supports an on-demand `/brief` command via a Flask webhook hosted on PythonAnywhere.
+Also supports on-demand Telegram commands via a Flask webhook hosted on PythonAnywhere, including a shared watchlist with live pre/post-market prices.
+
+---
+
+## Telegram Commands
+
+| Command | What it does |
+|---------|--------------|
+| `/brief` | Trigger a full brief now (limit 5/hour) |
+| `/watch NVDA TSLA` | Add stocks to the shared watchlist (validated against Yahoo Finance, max 30) |
+| `/unwatch NVDA` | Remove stocks from the watchlist |
+| `/watchlist` | Live prices for the watchlist — works during pre-market and after-hours too |
+| `/help` | List all commands |
+
+The watchlist is shared by everyone in the group (single-group bot). It is stored as `watchlist.json` in this repo: the webhook commits changes via the GitHub API, and the daily brief picks the file up automatically on its next run, showing a **⭐ Watchlist** section with live prices.
 
 ---
 
@@ -11,9 +25,12 @@ Also supports an on-demand `/brief` command via a Flask webhook hosted on Python
 | File | Purpose |
 |------|---------|
 | `bot.py` | Core logic — market data, headlines, Groq prompt, Telegram send |
-| `app.py` | Flask webhook server — handles `/brief` command from Telegram |
+| `app.py` | Flask webhook server — handles `/brief` and watchlist commands from Telegram |
+| `watchlist.py` | Shared watchlist module — live quotes (pre/post market), validation, formatting |
+| `watchlist.json` | The shared watchlist itself (committed by the webhook via GitHub API) |
 | `requirements.txt` | Python dependencies |
 | `.github/workflows/daily_brief.yml` | GitHub Actions scheduler (Mon–Fri, 11:00 UTC) |
+| `CLAUDE.md` | Architecture notes for AI-assisted development |
 
 ---
 
@@ -101,9 +118,12 @@ cat >> ~/.bashrc << 'EOF'
 export TELEGRAM_BOT_TOKEN="your_token_here"
 export TELEGRAM_CHAT_ID="your_chat_id_here"
 export GROQ_API_KEY="your_groq_key_here"
+export GITHUB_PAT="your_github_pat_here"
 EOF
 source ~/.bashrc
 ```
+
+`GITHUB_PAT` needs **Actions: read/write** (to dispatch `/brief`) and **Contents: read/write** (to commit watchlist changes) on this repo.
 
 ### 4. Create the Web App
 
@@ -121,6 +141,7 @@ sys.path.insert(0, '/home/YOUR_USERNAME/stocks')
 os.environ['TELEGRAM_BOT_TOKEN'] = 'your_token_here'
 os.environ['TELEGRAM_CHAT_ID']   = 'your_chat_id_here'
 os.environ['GROQ_API_KEY']       = 'your_groq_key_here'
+os.environ['GITHUB_PAT']         = 'your_github_pat_here'
 
 from app import app as application
 ```
@@ -145,6 +166,16 @@ https://api.telegram.org/bot<YOUR_TOKEN>/getWebhookInfo
 ### 6. Test it
 
 Send `/brief` to your bot in Telegram. You'll get an instant "⏳ Fetching..." acknowledgement followed by the full brief within ~15 seconds.
+
+### Deploying code changes
+
+After pushing changes to `app.py` or `watchlist.py`, update the PythonAnywhere clone and reload:
+
+```bash
+cd ~/stocks && git pull
+```
+
+Then click **Reload** on the Web tab. (Watchlist *data* changes need nothing — the webhook reads/writes `watchlist.json` via the GitHub API, and the daily brief checks out fresh `main` every run.)
 
 ---
 
@@ -178,6 +209,10 @@ S&P 500: $5,432.10 ▲ +0.84%
 Nasdaq:  $17,891.50 ▲ +1.12%
 Dow:     $39,215.30 ▼ -0.21%
 Green open led by tech; Dow lagging on industrials drag.
+
+⭐ Watchlist (pre-market, vs prev close)
+▲ NVDA: 200.21 (+2.10%)
+▼ TSLA: 384.77 (-0.83%)
 
 🔬 Semis + AI Headlines
 1. Nvidia's Blackwell GPU demand outstrips supply into Q3

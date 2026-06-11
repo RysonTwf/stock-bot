@@ -12,6 +12,8 @@ import requests
 import yfinance as yf
 from groq import Groq
 
+from watchlist import load_watchlist, get_live_quotes, format_watchlist
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -31,7 +33,9 @@ SECTORS = {
     "VIX": "^VIX",  # CBOE Volatility Index
 }
 
-WATCHLIST = [
+# Universe scanned for the Premarket Movers section (distinct from the
+# user-managed shared watchlist in watchlist.json)
+MOVERS_UNIVERSE = [
     "NVDA", "AMD",  "MU",   "MRVL", "INTC", "AMAT",
     "AAPL", "MSFT", "GOOGL","META", "AMZN", "TSLA", "ORCL", "ARM", "AVGO", "QCOM",
     "TSM",  "ASML", "LRCX", "KLAC", "TSEM", "TXN",  "SWKS", "ONTO", "WOLF", "SLAB",
@@ -90,11 +94,11 @@ def get_market_data() -> dict:
     return data
 
 
-def get_watchlist_moves() -> dict[str, float]:
-    """Return premarket % change vs previous close for each watchlist ticker."""
+def get_premarket_moves() -> dict[str, float]:
+    """Return premarket % change vs previous close for each movers-universe ticker."""
     # Step 1: batch-fetch previous closes (reliable with daily interval)
     try:
-        daily = yf.download(WATCHLIST, period="5d", interval="1d",
+        daily = yf.download(MOVERS_UNIVERSE, period="5d", interval="1d",
                             progress=False, auto_adjust=True)
         closes = daily["Close"].dropna(how="all")
         # Drop any partial row for today so iloc[-1] is always the last completed session
@@ -135,13 +139,13 @@ def get_watchlist_moves() -> dict[str, float]:
 
     moves: dict[str, float] = {}
     with ThreadPoolExecutor(max_workers=10) as ex:
-        for fut in as_completed({ex.submit(_fetch_current, t): t for t in WATCHLIST}):
+        for fut in as_completed({ex.submit(_fetch_current, t): t for t in MOVERS_UNIVERSE}):
             try:
                 item = fut.result()
                 if item:
                     moves[item[0]] = item[1]
             except Exception as e:
-                print(f"  [warn] Watchlist future failed: {e}", file=sys.stderr)
+                print(f"  [warn] Movers future failed: {e}", file=sys.stderr)
     return moves
 
 
@@ -371,11 +375,21 @@ def main() -> None:
     for name, d in market_data.items():
         print(f"    {name}: {d['price']:,.2f} ({d['change_pct']:+.2f}%)")
 
-    print("  Fetching watchlist moves...")
-    ticker_moves = get_watchlist_moves()
+    print("  Fetching premarket movers...")
+    ticker_moves = get_premarket_moves()
     sorted_moves = sorted(ticker_moves.items(), key=lambda x: x[1])
     for t, p in sorted_moves[-3:][::-1] + sorted_moves[:3]:
         print(f"    {t}: {p:+.2f}%")
+
+    print("  Fetching shared watchlist quotes...")
+    user_watchlist = load_watchlist()
+    watchlist_section = ""
+    if user_watchlist:
+        quotes = get_live_quotes(user_watchlist)
+        watchlist_section = format_watchlist(user_watchlist, quotes) + "\n\n"
+        for t in user_watchlist:
+            q = quotes.get(t)
+            print(f"    {t}: {q['price']:,.2f} ({q['change_pct']:+.2f}%)" if q else f"    {t}: no data")
 
     print("  Fetching RSS headlines...")
     headlines = get_headlines()
@@ -386,8 +400,8 @@ def main() -> None:
     prompt   = build_prompt(headlines, ticker_moves)
     llm_part = enforce_annotations(call_groq(prompt), ticker_moves)
 
-    # Sections 1–2 are rendered in Python so the numbers can't be garbled
-    brief = build_market_sections(market_data, ticker_moves) + "\n\n" + llm_part
+    # Sections 1–3 are rendered in Python so the numbers can't be garbled
+    brief = build_market_sections(market_data, ticker_moves) + "\n\n" + watchlist_section + llm_part
     print(f"  Brief length: {len(brief)} chars")
 
     print("  Sending to Telegram...")
