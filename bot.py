@@ -3,16 +3,14 @@ import os
 import re
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, date, timezone
 
 import feedparser
-import pandas as pd
 import requests
 import yfinance as yf
 from groq import Groq
 
-from watchlist import load_watchlist, get_live_quotes, format_watchlist
+from watchlist import load_watchlist, get_live_quotes, format_watchlist, market_session
 
 # ---------------------------------------------------------------------------
 # Config
@@ -94,58 +92,21 @@ def get_market_data() -> dict:
     return data
 
 
-def get_premarket_moves() -> dict[str, float]:
-    """Return premarket % change vs previous close for each movers-universe ticker."""
-    # Step 1: batch-fetch previous closes (reliable with daily interval)
-    try:
-        daily = yf.download(MOVERS_UNIVERSE, period="5d", interval="1d",
-                            progress=False, auto_adjust=True)
-        closes = daily["Close"].dropna(how="all")
-        # Drop any partial row for today so iloc[-1] is always the last completed session
-        closes = closes[closes.index.normalize().date < date.today()]
-        if closes.empty:
-            print("  [warn] No completed daily session data", file=sys.stderr)
-            return {}
-        prev_closes = closes.iloc[-1]
-    except Exception as e:
-        print(f"  [warn] Could not fetch daily closes: {e}", file=sys.stderr)
-        return {}
+def get_universe_moves() -> dict[str, float]:
+    """Live % change vs prev close (any session: pre/regular/post) per ticker.
 
-    # Step 2: per-ticker 1-min history with prepost — batch download misses many tickers
-    def _fetch_current(ticker: str) -> tuple[str, float] | None:
-        try:
-            prev = float(prev_closes.get(ticker, float("nan")))
-            if pd.isna(prev) or prev == 0:
-                return None
-            hist = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
-            closes_1m = hist["Close"].dropna() if not hist.empty else hist
-            if closes_1m.empty:
-                return None
-            # Discard stale quotes: last trade more than 2h old means no live session
-            age = pd.Timestamp.now(tz=closes_1m.index.tz) - closes_1m.index[-1]
-            if age > pd.Timedelta(hours=2):
-                return None
-            # Median of the last few 1-min candles — a single thin-volume trade
-            # can print a wild price; the median smooths it out
-            curr = float(closes_1m.tail(5).median())
-            val = round((curr - prev) / prev * 100, 2)
-            if abs(val) > 25:
-                print(f"  [warn] {ticker} move {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
-                return None
-            return ticker, val
-        except Exception as e:
-            print(f"  [warn] Could not fetch {ticker}: {e}", file=sys.stderr)
-            return None
-
+    Same quote source as the watchlist, so annotations and movers always
+    match what /watchlist shows.
+    """
     moves: dict[str, float] = {}
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        for fut in as_completed({ex.submit(_fetch_current, t): t for t in MOVERS_UNIVERSE}):
-            try:
-                item = fut.result()
-                if item:
-                    moves[item[0]] = item[1]
-            except Exception as e:
-                print(f"  [warn] Movers future failed: {e}", file=sys.stderr)
+    for ticker, q in get_live_quotes(MOVERS_UNIVERSE).items():
+        if q["stale"]:
+            continue  # last trade >2h old — no live session for this ticker
+        val = round(q["change_pct"], 2)
+        if abs(val) > 25:
+            print(f"  [warn] {ticker} move {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
+            continue
+        moves[ticker] = val
     return moves
 
 
@@ -226,12 +187,12 @@ def build_market_sections(market_data: dict, ticker_moves: dict[str, float]) -> 
         lines.append(f"VIX: {vix['price']:.1f} ({vix['change_pct']:+.1f}%) — {_vix_mood(vix['price'])}")
 
     lines.append("")
-    lines.append("<b>📈 Premarket Movers</b> <i>(vs prev close)</i>")
+    lines.append(f"<b>📈 Movers</b> <i>({market_session()}, vs prev close)</i>")
     sorted_moves = sorted(ticker_moves.items(), key=lambda x: x[1])
     gainers = [(t, p) for t, p in reversed(sorted_moves) if p > 0][:3]
     losers  = [(t, p) for t, p in sorted_moves if p < 0][:3]
-    lines.append("▲ " + (" | ".join(f"{t} {p:+.1f}%" for t, p in gainers) or "<i>no gainers in premarket</i>"))
-    lines.append("▼ " + (" | ".join(f"{t} {p:+.1f}%" for t, p in losers) or "<i>no losers in premarket</i>"))
+    lines.append("▲ " + (" | ".join(f"{t} {p:+.1f}%" for t, p in gainers) or "<i>no gainers</i>"))
+    lines.append("▼ " + (" | ".join(f"{t} {p:+.1f}%" for t, p in losers) or "<i>no losers</i>"))
     return "\n".join(lines)
 
 
@@ -269,7 +230,7 @@ def build_prompt(headlines: list[dict], ticker_moves: dict[str, float]) -> str:
     return f"""You are a sharp financial analyst writing the headlines portion of a premarket brief for {today}.
 Output a Telegram HTML message — no preamble, no market summary, start directly with the headlines section.
 
-PRICE DATA (premarket % vs prev close — use to annotate headlines, do not list separately):
+PRICE DATA (live % vs prev close — use to annotate headlines, do not list separately):
 {price_ctx}
 
 RAW HEADLINES (may include noise — you must filter):
@@ -375,8 +336,8 @@ def main() -> None:
     for name, d in market_data.items():
         print(f"    {name}: {d['price']:,.2f} ({d['change_pct']:+.2f}%)")
 
-    print("  Fetching premarket movers...")
-    ticker_moves = get_premarket_moves()
+    print("  Fetching live movers...")
+    ticker_moves = get_universe_moves()
     sorted_moves = sorted(ticker_moves.items(), key=lambda x: x[1])
     for t, p in sorted_moves[-3:][::-1] + sorted_moves[:3]:
         print(f"    {t}: {p:+.2f}%")

@@ -58,64 +58,12 @@ def is_valid_ticker(ticker: str) -> bool:
         return False
 
 
-# Daily closes don't change intraday, so cache them per ET date. The cache
-# lives for the process — useful in the long-running webhook, harmless in Actions.
-_daily_cache: dict[str, tuple[date, float, float | None]] = {}  # ticker -> (et_date, prev_close, today_close)
-_cache_lock = threading.Lock()
-
-
-def _get_daily_closes(ticker: str, et_today: date, need_today_close: bool) -> tuple[float | None, float | None]:
-    """Return (prev_completed_close, today_close). today_close is only fetched
-    after the regular session ends (need_today_close), else None."""
-    with _cache_lock:
-        hit = _daily_cache.get(ticker)
-    if hit and hit[0] == et_today and not (need_today_close and hit[2] is None):
-        return hit[1], hit[2]
-
-    daily = yf.Ticker(ticker).history(period="10d", interval="1d")["Close"].dropna()
-    completed = daily[[ts.date() < et_today for ts in daily.index]]
-    prev = float(completed.iloc[-1]) if not completed.empty else None
-    today_rows = daily[[ts.date() == et_today for ts in daily.index]]
-    today_close = float(today_rows.iloc[-1]) if (need_today_close and not today_rows.empty) else None
-
-    with _cache_lock:
-        _daily_cache[ticker] = (et_today, prev, today_close)
-    return prev, today_close
-
-
-def _fetch_quote_yahoo(ticker: str) -> dict | None:
-    now_et = datetime.now(_ET)
-    et_today = now_et.date()
-    # After 16:00 ET on a weekday today's daily bar is settled, so we can split
-    # the move into day change and after-hours change
-    post_close = now_et.weekday() < 5 and now_et.hour >= 16
-
-    prev, today_close = _get_daily_closes(ticker, et_today, post_close)
-    if not prev:
-        return None
-
-    hist = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
-    closes_1m = hist["Close"].dropna() if not hist.empty else hist
-    if closes_1m.empty:
-        return None
-    age = pd.Timestamp.now(tz=closes_1m.index.tz) - closes_1m.index[-1]
-    price = float(closes_1m.iloc[-1])
-    quote = {
-        "price": price,
-        "change_pct": (price - prev) / prev * 100,
-        "stale": age > pd.Timedelta(hours=2),
-    }
-    if today_close:
-        quote["day_pct"] = (today_close - prev) / prev * 100
-        quote["post_pct"] = (price - today_close) / today_close * 100
-    return quote
-
-
 def _fetch_quote_direct(ticker: str) -> dict | None:
-    """Fallback when the yfinance library fails: hit Yahoo's chart API directly.
+    """Primary quote source: Yahoo's chart API, one call per ticker.
 
-    Most yfinance breakage is library-side (crumb/cookie/parsing), so a plain
-    HTTP call to the same backend usually still works. No day/AH split here.
+    Returns the live price (pre/post included) plus the previous session close
+    from the same response — unlike yfinance daily history, which has returned
+    wrongly split-adjusted prev closes (KLAC was off by 10x once).
     """
     resp = requests.get(
         f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
@@ -142,19 +90,60 @@ def _fetch_quote_direct(ticker: str) -> dict | None:
     }
 
 
+# Previous closes don't change intraday, so cache them per ET date. The cache
+# lives for the process — useful in the long-running webhook, harmless in Actions.
+_prev_close_cache: dict[str, tuple[date, float | None]] = {}  # ticker -> (et_date, prev_close)
+_cache_lock = threading.Lock()
+
+
+def _get_prev_close(ticker: str, et_today: date) -> float | None:
+    """Last completed daily close before today (ET)."""
+    with _cache_lock:
+        hit = _prev_close_cache.get(ticker)
+    if hit and hit[0] == et_today:
+        return hit[1]
+
+    daily = yf.Ticker(ticker).history(period="10d", interval="1d")["Close"].dropna()
+    completed = daily[[ts.date() < et_today for ts in daily.index]]
+    prev = float(completed.iloc[-1]) if not completed.empty else None
+
+    with _cache_lock:
+        _prev_close_cache[ticker] = (et_today, prev)
+    return prev
+
+
+def _fetch_quote_yfinance(ticker: str) -> dict | None:
+    """Fallback quote source via the yfinance library."""
+    prev = _get_prev_close(ticker, datetime.now(_ET).date())
+    if not prev:
+        return None
+
+    hist = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True)
+    closes_1m = hist["Close"].dropna() if not hist.empty else hist
+    if closes_1m.empty:
+        return None
+    age = pd.Timestamp.now(tz=closes_1m.index.tz) - closes_1m.index[-1]
+    price = float(closes_1m.iloc[-1])
+    return {
+        "price": price,
+        "change_pct": (price - prev) / prev * 100,
+        "stale": age > pd.Timedelta(hours=2),
+    }
+
+
 def _fetch_quote(ticker: str) -> tuple[str, dict] | None:
     quote = None
     try:
-        quote = _fetch_quote_yahoo(ticker)
+        quote = _fetch_quote_direct(ticker)
     except Exception as e:
-        print(f"  [warn] yfinance quote failed for {ticker}: {e}", file=sys.stderr)
+        print(f"  [warn] Chart-API quote failed for {ticker}: {e}", file=sys.stderr)
     if quote is None:
         try:
-            quote = _fetch_quote_direct(ticker)
+            quote = _fetch_quote_yfinance(ticker)
             if quote:
-                print(f"  [info] {ticker}: used direct chart-API fallback", file=sys.stderr)
+                print(f"  [info] {ticker}: used yfinance fallback", file=sys.stderr)
         except Exception as e:
-            print(f"  [warn] Direct chart-API fallback failed for {ticker}: {e}", file=sys.stderr)
+            print(f"  [warn] yfinance fallback failed for {ticker}: {e}", file=sys.stderr)
     return (ticker, quote) if quote else None
 
 
@@ -186,10 +175,6 @@ def format_watchlist(tickers: list[str], quotes: dict[str, dict]) -> str:
             lines.append(f"• {html.escape(t)}: <i>no data</i>")
             continue
         arrow = "▲" if q["change_pct"] >= 0 else "▼"
-        if "post_pct" in q:
-            change = f"day {q['day_pct']:+.2f}%, AH {q['post_pct']:+.2f}%"
-        else:
-            change = f"{q['change_pct']:+.2f}%"
         tags = " <i>(last trade &gt;2h ago)</i>" if q.get("stale") else ""
-        lines.append(f"{arrow} {html.escape(t)}: {q['price']:,.2f} ({change}){tags}")
+        lines.append(f"{arrow} {html.escape(t)}: {q['price']:,.2f} ({q['change_pct']:+.2f}%){tags}")
     return "\n".join(lines)
