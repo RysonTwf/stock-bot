@@ -73,15 +73,33 @@ def _fetch_quote_direct(ticker: str) -> dict | None:
     )
     resp.raise_for_status()
     result = resp.json()["chart"]["result"][0]
-    prev = float(result["meta"]["chartPreviousClose"])
+    meta = result["meta"]
     bars = [
         (ts, c)
         for ts, c in zip(result["timestamp"], result["indicators"]["quote"][0]["close"])
         if c is not None
     ]
-    if not bars or prev == 0:
+    if not bars:
         return None
     last_ts, price = bars[-1]
+
+    # Yahoo quirk: during pre-market the chart's "current day" is still the
+    # prior regular session (the new day's pre-market bars get appended to it),
+    # so chartPreviousClose is the close from TWO sessions back — using it
+    # compounds the prior day's full move into the pre-market % change
+    # (e.g. AMD showed +9.3% instead of ~+2% on 2026-06-12). In that window the
+    # last completed close sits in regularMarketPrice instead. Regular hours
+    # and after-hours, chartPreviousClose is correct — don't "simplify" this.
+    prev = float(meta.get("chartPreviousClose") or 0)
+    ctp = meta.get("currentTradingPeriod") or {}
+    try:
+        in_premarket = ctp["pre"]["start"] <= last_ts < ctp["regular"]["start"]
+    except (KeyError, TypeError):
+        in_premarket = False
+    if in_premarket and meta.get("regularMarketPrice"):
+        prev = float(meta["regularMarketPrice"])
+    if prev == 0:
+        return None
     age = datetime.now(timezone.utc).timestamp() - last_ts
     return {
         "price": float(price),

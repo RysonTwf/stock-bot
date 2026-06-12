@@ -16,7 +16,7 @@ Also supports on-demand Telegram commands via a Flask webhook hosted on PythonAn
 | `/watchlist` | Live prices for the watchlist — works during pre-market and after-hours too |
 | `/help` | List all commands |
 
-Watchlist lines always show the current price (regular, pre-market, or after-hours) against the previous session close, e.g. `▲ NVDA: 201.50 (+1.20%)`. The Movers section and the `(TICKER, ±X%)` headline annotations in the brief use the same live quote source, so all numbers agree. Quotes come from Yahoo's chart API directly (one call per ticker, correct prev closes) with the yfinance library as fallback.
+Watchlist lines always show the current price (regular, pre-market, or after-hours) against the previous session close, e.g. `▲ NVDA: 201.50 (+1.20%)`. The Movers section and the `(TICKER, ±X%)` headline annotations in the brief use the same live quote source, so all numbers agree. Quotes come from Yahoo's chart API directly (one call per ticker, correct prev closes) with the yfinance library as fallback. During pre-market, Yahoo's `chartPreviousClose` is two sessions old (the chart's "current day" is still the prior session), so the bot uses `regularMarketPrice` — the last completed close — as the baseline in that window; `tests/test_prev_close.py` covers this.
 
 The watchlist is shared by everyone in the group (single-group bot). It is stored as `watchlist.json` in this repo: the webhook commits changes via the GitHub API, and the daily brief picks the file up automatically on its next run, showing a **⭐ Watchlist** section with live prices.
 
@@ -30,6 +30,7 @@ The watchlist is shared by everyone in the group (single-group bot). It is store
 | `app.py` | Flask webhook server — handles `/brief` and watchlist commands from Telegram |
 | `watchlist.py` | Shared watchlist module — live quotes (pre/post market), validation, formatting |
 | `watchlist.json` | The shared watchlist itself (committed by the webhook via GitHub API) |
+| `tests/test_prev_close.py` | Standalone test (no pytest) for prev-close selection; run it directly for a live AMD/NVDA sanity check |
 | `requirements.txt` | Python dependencies |
 | `.github/workflows/daily_brief.yml` | GitHub Actions scheduler (Mon–Fri, 11:00 UTC) |
 | `CLAUDE.md` | Architecture notes for AI-assisted development |
