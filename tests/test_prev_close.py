@@ -99,6 +99,29 @@ def run_tests():
     assert abs(q["change_pct"] - expected_pct(PRICE, STALE_CLOSE)) < 1e-9, q
     print("PASS pre-market with missing regularMarketPrice: fell back to chartPreviousClose")
 
+    # 5. No bars at all (cash index pre-market: Yahoo rolls the chart to the
+    #    new day, empty) -> quote from meta: regularMarketPrice (the last
+    #    close, timestamped in the prior regular session) vs chartPreviousClose.
+    p = {"chart": {"result": [{
+        "meta": {
+            "chartPreviousClose": STALE_CLOSE,
+            "regularMarketPrice": REAL_CLOSE,
+            "regularMarketTime": REG_START - 18 * 3600,  # prior session's close
+            "currentTradingPeriod": {
+                "pre": {"start": PRE_START, "end": REG_START},
+                "regular": {"start": REG_START, "end": REG_END},
+                "post": {"start": REG_END, "end": POST_END},
+            },
+        },
+        "indicators": {"quote": [{}]},
+    }]}}
+    q = fetch_with(p)
+    assert q is not None
+    assert abs(q["price"] - REAL_CLOSE) < 1e-9, q
+    assert abs(q["change_pct"] - expected_pct(REAL_CLOSE, STALE_CLOSE)) < 1e-9, q
+    print("PASS index with no bars: price/prev taken from meta "
+          f"({REAL_CLOSE} vs {STALE_CLOSE}, change {q['change_pct']:+.2f}%)")
+
     print("\nAll tests passed.")
 
 

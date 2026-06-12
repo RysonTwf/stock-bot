@@ -3,11 +3,10 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, date, timezone
+from datetime import datetime, timezone
 
 import feedparser
 import requests
-import yfinance as yf
 from groq import Groq
 
 from watchlist import load_watchlist, get_live_quotes, format_watchlist, market_session
@@ -64,32 +63,16 @@ SEMI_AI_KEYWORDS = [
 # Market data
 # ---------------------------------------------------------------------------
 def get_market_data() -> dict:
-    """Last completed session close + % change vs prior close, from daily bars.
+    """Live price + % change vs last completed close (any session) per index/ETF.
 
-    Daily bars match published closing values; fast_info is cached and has
-    returned wrong VIX/index numbers.
+    Same quote source as movers and the watchlist (watchlist.get_live_quotes),
+    so every section of the brief shares one session-aware baseline. Cash
+    indices don't trade pre-market, so until the open they show the last close
+    vs the close before it — same numbers the old daily-bars version produced.
     """
     tickers = {**INDICES, **SECTORS}
-    data: dict = {}
-    try:
-        daily  = yf.download(list(tickers.values()), period="10d", interval="1d",
-                             progress=False, auto_adjust=False)
-        closes = daily["Close"]
-    except Exception as e:
-        print(f"  [warn] Could not fetch index data: {e}", file=sys.stderr)
-        return data
-    for name, ticker in tickers.items():
-        try:
-            s = closes[ticker].dropna()
-            # Exclude any partial bar for today so we only report settled closes
-            s = s[s.index.normalize().date < date.today()]
-            if len(s) < 2:
-                continue
-            cur, prev = float(s.iloc[-1]), float(s.iloc[-2])
-            data[name] = {"price": cur, "change_pct": (cur - prev) / prev * 100}
-        except Exception as e:
-            print(f"  [warn] Could not parse {ticker}: {e}", file=sys.stderr)
-    return data
+    quotes = get_live_quotes(list(tickers.values()))
+    return {name: q for name, sym in tickers.items() if (q := quotes.get(sym))}
 
 
 def get_universe_moves() -> dict[str, float]:
@@ -168,7 +151,7 @@ def _arrow(pct: float) -> str:
 
 def build_market_sections(market_data: dict, ticker_moves: dict[str, float]) -> str:
     """Render Sections 1–2 in Python so every number is exactly what we fetched."""
-    lines = ["<b>📊 Market Pulse</b> <i>(last US close)</i>"]
+    lines = [f"<b>📊 Market Pulse</b> <i>({market_session()}, vs prev close)</i>"]
     for name in INDICES:
         d = market_data.get(name)
         if d:
@@ -214,6 +197,15 @@ def enforce_annotations(text: str, ticker_moves: dict[str, float]) -> str:
             return f"({t}, {ticker_moves[t]:+.1f}%)"
         return f"({t}, N/A)"
     return ANNOTATION_RE.sub(fix, text)
+
+
+def label_llm_sections(text: str) -> str:
+    """Append the session label to the LLM-written section headers in Python,
+    so it's always present and exact rather than trusting the LLM to copy it."""
+    label = f" <i>({market_session()}, vs prev close)</i>"
+    for header in ("<b>🔬 Semis + AI Headlines</b>", "<b>👀 One Thing To Watch</b>"):
+        text = text.replace(header, header + label, 1)
+    return text
 
 
 def build_prompt(headlines: list[dict], ticker_moves: dict[str, float]) -> str:
@@ -359,7 +351,7 @@ def main() -> None:
 
     print("  Calling Groq (llama-3.3-70b-versatile)...")
     prompt   = build_prompt(headlines, ticker_moves)
-    llm_part = enforce_annotations(call_groq(prompt), ticker_moves)
+    llm_part = label_llm_sections(enforce_annotations(call_groq(prompt), ticker_moves))
 
     # Sections 1–3 are rendered in Python so the numbers can't be garbled
     brief = build_market_sections(market_data, ticker_moves) + "\n\n" + watchlist_section + llm_part

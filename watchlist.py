@@ -74,14 +74,22 @@ def _fetch_quote_direct(ticker: str) -> dict | None:
     resp.raise_for_status()
     result = resp.json()["chart"]["result"][0]
     meta = result["meta"]
+    closes = (result.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
     bars = [
         (ts, c)
-        for ts, c in zip(result["timestamp"], result["indicators"]["quote"][0]["close"])
+        for ts, c in zip(result.get("timestamp") or [], closes)
         if c is not None
     ]
-    if not bars:
-        return None
-    last_ts, price = bars[-1]
+    if bars:
+        last_ts, price = bars[-1]
+    else:
+        # Cash indices (^GSPC etc.) don't trade pre-market: Yahoo rolls the
+        # chart to the new day with no bars at all. The meta still carries the
+        # last trade — regularMarketPrice at regularMarketTime (the last
+        # close) — which keeps "current price vs prev completed close" intact.
+        if not meta.get("regularMarketPrice") or not meta.get("regularMarketTime"):
+            return None
+        last_ts, price = int(meta["regularMarketTime"]), float(meta["regularMarketPrice"])
 
     # Yahoo quirk: during pre-market the chart's "current day" is still the
     # prior regular session (the new day's pre-market bars get appended to it),

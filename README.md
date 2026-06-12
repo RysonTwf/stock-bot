@@ -207,7 +207,7 @@ python bot.py
 ## What the Brief Looks Like
 
 ```
-📊 Market Pulse
+📊 Market Pulse (pre-market, vs prev close)
 S&P 500: $5,432.10 ▲ +0.84%
 Nasdaq:  $17,891.50 ▲ +1.12%
 Dow:     $39,215.30 ▼ -0.21%
@@ -217,14 +217,16 @@ Green open led by tech; Dow lagging on industrials drag.
 ▲ NVDA: 200.21 (+2.10%)
 ▼ TSLA: 384.77 (-0.83%)
 
-🔬 Semis + AI Headlines
+🔬 Semis + AI Headlines (pre-market, vs prev close)
 1. Nvidia's Blackwell GPU demand outstrips supply into Q3
 2. TSMC raises 2025 revenue forecast on AI chip orders
 ...
 
-👀 One Thing To Watch
+👀 One Thing To Watch (pre-market, vs prev close)
 Nvidia supply constraints are the dominant story today...
 ```
+
+Every section header carries the same `(session, vs prev close)` label — pre-market, regular hours, after-hours, or market closed — and all sections share one live quote source, so the numbers are directly comparable. Cash indices don't trade pre-market, so until the open Market Pulse shows the last close and its move.
 
 ---
 
