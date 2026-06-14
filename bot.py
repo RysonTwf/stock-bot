@@ -96,51 +96,43 @@ def get_universe_moves() -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
-# Reddit posts
+# Reddit posts (via PRAW — official API, not blocked by Reddit)
 # ---------------------------------------------------------------------------
-_REDDIT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-}
-
-
 def get_reddit_posts(top_n: int = 5) -> list[dict]:
-    """Fetch hot posts from finance subreddits via RSS.
+    """Fetch hot posts from finance subreddits via PRAW (Reddit official API).
 
-    Uses requests (full browser-like headers) then feedparser to parse the
-    response body — avoids feedparser's own UA which Reddit rate-limits.
-    Each runner IP is fresh in GitHub Actions (once/day), so 429s from
-    repeated local test runs should not occur in production.
+    Requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET env vars (read-only
+    script app registered at reddit.com/prefs/apps). Silently returns [] if
+    credentials are absent so the section is just skipped in dev without them.
     """
+    import praw  # optional dependency — only imported when credentials exist
+
+    client_id     = os.environ.get("REDDIT_CLIENT_ID", "")
+    client_secret = os.environ.get("REDDIT_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        print("  [warn] Reddit: REDDIT_CLIENT_ID/SECRET not set — skipping", file=sys.stderr)
+        return []
+
+    reddit = praw.Reddit(
+        client_id=client_id,
+        client_secret=client_secret,
+        user_agent="stockbot/1.0 by RysonTwf",
+    )
+
     posts: list[dict] = []
-    for i, sub in enumerate(REDDIT_SUBS):
-        if i:
-            time.sleep(3)  # space requests to avoid 429 on shared IPs
-        url = f"https://www.reddit.com/r/{sub}/hot.rss?limit=25"
+    for sub in REDDIT_SUBS:
         try:
-            resp = requests.get(url, headers=_REDDIT_HEADERS, timeout=10)
-            if resp.status_code == 429:
-                print(f"  [warn] Reddit r/{sub}: 429 rate-limited, skipping", file=sys.stderr)
-                continue
-            resp.raise_for_status()
-            feed = feedparser.parse(resp.content)
-            if not feed.entries:
-                print(f"  [warn] Reddit r/{sub}: empty RSS response", file=sys.stderr)
-                continue
-            print(f"  [info] Reddit r/{sub}: {len(feed.entries)} posts", file=sys.stderr)
-            for entry in feed.entries:
-                title = entry.get("title", "").strip()
-                link  = entry.get("link", "").strip()
-                if not title or title.lower().startswith("[removed]"):
+            for post in reddit.subreddit(sub).hot(limit=25):
+                if post.stickied:
                     continue
                 posts.append({
-                    "title": title,
-                    "url":   link,
+                    "title": post.title.strip(),
+                    "url":   f"https://reddit.com{post.permalink}",
+                    "score": post.score,
                     "sub":   sub,
                 })
         except Exception as e:
-            print(f"  [warn] Reddit RSS fetch failed for r/{sub}: {e}", file=sys.stderr)
+            print(f"  [warn] Reddit r/{sub}: {e}", file=sys.stderr)
 
     def _words(title: str) -> set[str]:
         return set(re.findall(r"[a-z]{3,}", title.lower()))
@@ -149,7 +141,7 @@ def get_reddit_posts(top_n: int = 5) -> list[dict]:
     relevant: list[dict] = []
     fallback: list[dict] = []
 
-    for p in posts:
+    for p in sorted(posts, key=lambda x: x["score"], reverse=True):
         title_lower = " " + p["title"].lower() + " "
         words = _words(p["title"])
         if words and any(len(words & kw) / len(words | kw) > 0.6 for kw in kept_words):
@@ -169,7 +161,7 @@ def build_reddit_section(posts: list[dict]) -> str:
     lines = ["<b>📰 Reddit Buzz</b> <i>(wsb · stocks · investing)</i>"]
     for p in posts:
         title = html.escape(p["title"])
-        lines.append(f'• <a href="{p["url"]}">{title}</a> <i>(r/{p["sub"]})</i>')
+        lines.append(f'• <a href="{p["url"]}">{title}</a> <i>(r/{p["sub"]}, ↑{p["score"]:,})</i>')
     return "\n".join(lines)
 
 
