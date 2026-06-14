@@ -39,6 +39,8 @@ MOVERS_UNIVERSE = [
     "SMCI", "HPE",  "DELL", "CDNS", "SNPS", "MCHP", "ADI",  "NXPI", "ON",   "STM",
 ]
 
+REDDIT_SUBS = ["wallstreetbets", "stocks", "investing"]
+
 RSS_FEEDS = [
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,AMD,MU,MRVL,INTC,AMAT&region=US&lang=en-US",
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL,MSFT,GOOGL,META,AMZN,TSLA,ORCL,ARM,AVGO,QCOM&region=US&lang=en-US",
@@ -58,26 +60,6 @@ SEMI_AI_KEYWORDS = [
     "openai", "anthropic", "llm", "large language", "generative",
 ]
 
-# Nitter instances tried in order; section is silently skipped if all fail.
-NITTER_INSTANCES = [
-    "nitter.privacyredirect.com",
-    "nitter.poast.org",
-    "nitter.1d4.us",
-    "nitter.tiekoetter.com",
-    "nitter.it",
-]
-
-# Financial Twitter accounts to pull via Nitter RSS timelines.
-NITTER_ACCOUNTS = [
-    "unusual_whales",
-    "zerohedge",
-    "WatcherGuru",
-    "CNBCnow",
-    "marketwatch",
-]
-
-_CASHTAG_RE = re.compile(r"\$[A-Z]{1,5}\b")
-
 
 # ---------------------------------------------------------------------------
 # Market data
@@ -96,24 +78,77 @@ def get_market_data() -> dict:
 
 
 def get_universe_moves() -> dict[str, float]:
-    """% change vs prev close per ticker (any session: pre/regular/post/closed).
+    """Live % change vs prev close (any session: pre/regular/post) per ticker.
 
     Same quote source as the watchlist, so annotations and movers always
-    match what /watchlist shows. During "market closed" we keep stale quotes
-    because they are the last close vs prev close — still meaningful for
-    annotations. During live sessions, stale means no recent trade so we skip.
+    match what /watchlist shows.
     """
     moves: dict[str, float] = {}
-    live_session = market_session() != "market closed"
     for ticker, q in get_live_quotes(MOVERS_UNIVERSE).items():
-        if q["stale"] and live_session:
-            continue  # last trade >2h old during an active session — no live price
+        if q["stale"]:
+            continue  # last trade >2h old — no live session for this ticker
         val = round(q["change_pct"], 2)
         if abs(val) > 25:
             print(f"  [warn] {ticker} move {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
             continue
         moves[ticker] = val
     return moves
+
+
+# ---------------------------------------------------------------------------
+# Reddit posts
+# ---------------------------------------------------------------------------
+def get_reddit_posts(top_n: int = 5) -> list[dict]:
+    """Fetch hot posts from finance subreddits via the public JSON API (no auth)."""
+    headers = {"User-Agent": "stockbot/1.0 (daily brief)"}
+    posts: list[dict] = []
+    for sub in REDDIT_SUBS:
+        url = f"https://www.reddit.com/r/{sub}/hot.json?limit=25"
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            for child in resp.json()["data"]["children"]:
+                d = child["data"]
+                if d.get("stickied"):
+                    continue
+                posts.append({
+                    "title": d.get("title", "").strip(),
+                    "url":   "https://reddit.com" + d.get("permalink", ""),
+                    "score": d.get("score", 0),
+                    "sub":   sub,
+                })
+        except Exception as e:
+            print(f"  [warn] Reddit fetch failed for r/{sub}: {e}", file=sys.stderr)
+
+    def _words(title: str) -> set[str]:
+        return set(re.findall(r"[a-z]{3,}", title.lower()))
+
+    kept_words: list[set[str]] = []
+    relevant: list[dict] = []
+    fallback: list[dict] = []
+
+    for p in sorted(posts, key=lambda x: x["score"], reverse=True):
+        title_lower = " " + p["title"].lower() + " "
+        words = _words(p["title"])
+        if words and any(len(words & kw) / len(words | kw) > 0.6 for kw in kept_words):
+            continue
+        kept_words.append(words)
+        if any(kw in title_lower for kw in SEMI_AI_KEYWORDS):
+            relevant.append(p)
+        else:
+            fallback.append(p)
+
+    return (relevant + fallback)[:top_n]
+
+
+def build_reddit_section(posts: list[dict]) -> str:
+    if not posts:
+        return ""
+    lines = ["<b>📰 Reddit Buzz</b> <i>(wsb · stocks · investing)</i>"]
+    for p in posts:
+        title = html.escape(p["title"])
+        lines.append(f'• <a href="{p["url"]}">{title}</a> <i>(r/{p["sub"]}, ↑{p["score"]:,})</i>')
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -154,73 +189,6 @@ def get_headlines(max_per_feed: int = 30, top_n: int = 20) -> list[dict]:
             fallback.append(h)
 
     return (relevant + fallback)[:top_n]
-
-
-# ---------------------------------------------------------------------------
-# Social (X/Twitter via Nitter RSS) — best-effort, skipped if all instances fail
-# ---------------------------------------------------------------------------
-def _fetch_nitter_feed(account: str) -> list[dict]:
-    for instance in NITTER_INSTANCES:
-        url = f"https://{instance}/{account}/rss"
-        try:
-            resp = requests.get(
-                url,
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=8,
-            )
-            resp.raise_for_status()
-            feed = feedparser.parse(resp.content)
-            entries = []
-            for entry in feed.entries[:10]:
-                title = entry.get("title", "").strip()
-                link  = entry.get("link", "").strip()
-                if title and len(title) > 15:
-                    entries.append({"title": title, "link": link, "source": f"@{account}"})
-            if entries:
-                print(f"  [info] Nitter {instance}/{account}: {len(entries)} posts", file=sys.stderr)
-                return entries
-            print(f"  [warn] Nitter {instance}/{account}: empty feed", file=sys.stderr)
-        except Exception as e:
-            print(f"  [warn] Nitter {instance}/{account}: {e}", file=sys.stderr)
-    print(f"  [warn] All Nitter instances failed for @{account}", file=sys.stderr)
-    return []
-
-
-def get_nitter_posts(top_n: int = 8) -> list[dict]:
-    all_posts: list[dict] = []
-    for account in NITTER_ACCOUNTS:
-        all_posts.extend(_fetch_nitter_feed(account))
-
-    def _words(text: str) -> set[str]:
-        return set(re.findall(r"[a-z]{3,}", text.lower()))
-
-    relevant: list[dict] = []
-    fallback: list[dict] = []
-    seen_words: list[set[str]] = []
-    for p in all_posts:
-        text_lower = " " + p["title"].lower() + " "
-        words = _words(p["title"])
-        if words and any(len(words & sw) / len(words | sw) > 0.6 for sw in seen_words):
-            continue
-        seen_words.append(words)
-        if any(kw in text_lower for kw in SEMI_AI_KEYWORDS) or _CASHTAG_RE.search(p["title"]):
-            relevant.append(p)
-        else:
-            fallback.append(p)
-
-    return (relevant + fallback)[:top_n]
-
-
-def build_social_section(posts: list[dict]) -> str:
-    if not posts:
-        return ""
-    lines = [f"<b>\U0001d54f FinTwit</b> <i>({market_session()})</i>"]
-    for p in posts:
-        source = html.escape(p["source"])
-        title = re.sub(r"^@\w+:\s*", "", p["title"])
-        title = html.escape(title[:220])
-        lines.append(f"• <b>{source}:</b> {title}")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -434,6 +402,12 @@ def main() -> None:
             q = quotes.get(t)
             print(f"    {t}: {q['price']:,.2f} ({q['change_pct']:+.2f}%)" if q else f"    {t}: no data")
 
+    print("  Fetching Reddit posts...")
+    reddit_posts = get_reddit_posts()
+    reddit_section = build_reddit_section(reddit_posts) + "\n\n" if reddit_posts else ""
+    for p in reddit_posts:
+        print(f"    r/{p['sub']}: {p['title'][:80]}")
+
     print("  Fetching RSS headlines...")
     headlines = get_headlines()
     for h in headlines:
@@ -444,22 +418,13 @@ def main() -> None:
     llm_part = label_llm_sections(enforce_annotations(call_groq(prompt), ticker_moves))
 
     # Sections 1–3 are rendered in Python so the numbers can't be garbled
-    brief = build_market_sections(market_data, ticker_moves) + "\n\n" + watchlist_section + llm_part
+    brief = build_market_sections(market_data, ticker_moves) + "\n\n" + watchlist_section + reddit_section + llm_part
     print(f"  Brief length: {len(brief)} chars")
 
     print("  Sending to Telegram...")
     result = send_telegram(brief)
     msg_id = result.get("result", {}).get("message_id", "?")
     print(f"  Done. Telegram message_id={msg_id}")
-
-    print("  Fetching X/Nitter posts...")
-    social_posts = get_nitter_posts()
-    social_section = build_social_section(social_posts)
-    if social_section:
-        print(f"  Sending social section ({len(social_section)} chars)...")
-        send_telegram(social_section)
-    else:
-        print("  No Nitter posts fetched — skipping social section")
 
 
 if __name__ == "__main__":

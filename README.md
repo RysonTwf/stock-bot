@@ -217,6 +217,11 @@ Green open led by tech; Dow lagging on industrials drag.
 ▲ NVDA: 200.21 (+2.10%)
 ▼ TSLA: 384.77 (-0.83%)
 
+📰 Reddit Buzz (wsb · stocks · investing)
+• NVDA short squeeze incoming? (r/wallstreetbets, ↑4,231)
+• TSMC beats Q2 estimates, raises guidance (r/stocks, ↑1,872)
+...
+
 🔬 Semis + AI Headlines (pre-market, vs prev close)
 1. Nvidia's Blackwell GPU demand outstrips supply into Q3
 2. TSMC raises 2025 revenue forecast on AI chip orders
@@ -224,16 +229,9 @@ Green open led by tech; Dow lagging on industrials drag.
 
 👀 One Thing To Watch (pre-market, vs prev close)
 Nvidia supply constraints are the dominant story today...
-
-𝕏 FinTwit (pre-market)
-• @unusual_whales: $NVDA unusual call sweep, 200k contracts...
-• @zerohedge: Fed minutes reveal hawkish tilt on core PCE...
-...
 ```
 
 Every section header carries the same `(session, vs prev close)` label — pre-market, regular hours, after-hours, or market closed — and all sections share one live quote source, so the numbers are directly comparable. Cash indices don't trade pre-market, so until the open Market Pulse shows the last close and its move.
-
-A second Telegram message follows immediately with the **𝕏 FinTwit** section: up to 8 posts pulled from financial Twitter accounts (`@unusual_whales`, `@zerohedge`, `@WatcherGuru`, `@CNBCnow`, `@marketwatch`) via Nitter RSS proxies, filtered to semis/AI/cashtag relevance and deduplicated. The section is silently skipped if all Nitter instances are unreachable.
 
 ---
 
@@ -242,4 +240,5 @@ A second Telegram message follows immediately with the **𝕏 FinTwit** section:
 - **Timing**: Edit the `cron` field in `daily_brief.yml`. Use [crontab.guru](https://crontab.guru) to build expressions.
 - **Extra tickers**: Add symbols to the `INDICES` dict in `bot.py` (any valid yfinance ticker).
 - **RSS feeds**: Add more URLs to the `RSS_FEEDS` list.
+- **Reddit subreddits**: Edit `REDDIT_SUBS` in `bot.py`. Posts are fetched via the public JSON API (no auth needed).
 - **Tone / format**: Edit the prompt in `build_prompt()` inside `bot.py`.
