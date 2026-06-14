@@ -96,15 +96,18 @@ def get_market_data() -> dict:
 
 
 def get_universe_moves() -> dict[str, float]:
-    """Live % change vs prev close (any session: pre/regular/post) per ticker.
+    """% change vs prev close per ticker (any session: pre/regular/post/closed).
 
     Same quote source as the watchlist, so annotations and movers always
-    match what /watchlist shows.
+    match what /watchlist shows. During "market closed" we keep stale quotes
+    because they are the last close vs prev close — still meaningful for
+    annotations. During live sessions, stale means no recent trade so we skip.
     """
     moves: dict[str, float] = {}
+    live_session = market_session() != "market closed"
     for ticker, q in get_live_quotes(MOVERS_UNIVERSE).items():
-        if q["stale"]:
-            continue  # last trade >2h old — no live session for this ticker
+        if q["stale"] and live_session:
+            continue  # last trade >2h old during an active session — no live price
         val = round(q["change_pct"], 2)
         if abs(val) > 25:
             print(f"  [warn] {ticker} move {val:+.1f}% looks like bad data — skipping", file=sys.stderr)
