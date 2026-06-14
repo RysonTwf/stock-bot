@@ -63,6 +63,8 @@ NITTER_INSTANCES = [
     "nitter.privacyredirect.com",
     "nitter.poast.org",
     "nitter.1d4.us",
+    "nitter.tiekoetter.com",
+    "nitter.it",
 ]
 
 # Financial Twitter accounts to pull via Nitter RSS timelines.
@@ -158,9 +160,13 @@ def _fetch_nitter_feed(account: str) -> list[dict]:
     for instance in NITTER_INSTANCES:
         url = f"https://{instance}/{account}/rss"
         try:
-            feed = feedparser.parse(url, request_headers={"User-Agent": "Mozilla/5.0"})
-            if getattr(feed, "status", 200) >= 400:
-                continue
+            resp = requests.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=8,
+            )
+            resp.raise_for_status()
+            feed = feedparser.parse(resp.content)
             entries = []
             for entry in feed.entries[:10]:
                 title = entry.get("title", "").strip()
@@ -168,7 +174,9 @@ def _fetch_nitter_feed(account: str) -> list[dict]:
                 if title and len(title) > 15:
                     entries.append({"title": title, "link": link, "source": f"@{account}"})
             if entries:
+                print(f"  [info] Nitter {instance}/{account}: {len(entries)} posts", file=sys.stderr)
                 return entries
+            print(f"  [warn] Nitter {instance}/{account}: empty feed", file=sys.stderr)
         except Exception as e:
             print(f"  [warn] Nitter {instance}/{account}: {e}", file=sys.stderr)
     print(f"  [warn] All Nitter instances failed for @{account}", file=sys.stderr)
