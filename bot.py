@@ -58,6 +58,24 @@ SEMI_AI_KEYWORDS = [
     "openai", "anthropic", "llm", "large language", "generative",
 ]
 
+# Nitter instances tried in order; section is silently skipped if all fail.
+NITTER_INSTANCES = [
+    "nitter.privacyredirect.com",
+    "nitter.poast.org",
+    "nitter.1d4.us",
+]
+
+# Financial Twitter accounts to pull via Nitter RSS timelines.
+NITTER_ACCOUNTS = [
+    "unusual_whales",
+    "zerohedge",
+    "WatcherGuru",
+    "CNBCnow",
+    "marketwatch",
+]
+
+_CASHTAG_RE = re.compile(r"\$[A-Z]{1,5}\b")
+
 
 # ---------------------------------------------------------------------------
 # Market data
@@ -131,6 +149,67 @@ def get_headlines(max_per_feed: int = 30, top_n: int = 20) -> list[dict]:
             fallback.append(h)
 
     return (relevant + fallback)[:top_n]
+
+
+# ---------------------------------------------------------------------------
+# Social (X/Twitter via Nitter RSS) — best-effort, skipped if all instances fail
+# ---------------------------------------------------------------------------
+def _fetch_nitter_feed(account: str) -> list[dict]:
+    for instance in NITTER_INSTANCES:
+        url = f"https://{instance}/{account}/rss"
+        try:
+            feed = feedparser.parse(url, request_headers={"User-Agent": "Mozilla/5.0"})
+            if getattr(feed, "status", 200) >= 400:
+                continue
+            entries = []
+            for entry in feed.entries[:10]:
+                title = entry.get("title", "").strip()
+                link  = entry.get("link", "").strip()
+                if title and len(title) > 15:
+                    entries.append({"title": title, "link": link, "source": f"@{account}"})
+            if entries:
+                return entries
+        except Exception as e:
+            print(f"  [warn] Nitter {instance}/{account}: {e}", file=sys.stderr)
+    print(f"  [warn] All Nitter instances failed for @{account}", file=sys.stderr)
+    return []
+
+
+def get_nitter_posts(top_n: int = 8) -> list[dict]:
+    all_posts: list[dict] = []
+    for account in NITTER_ACCOUNTS:
+        all_posts.extend(_fetch_nitter_feed(account))
+
+    def _words(text: str) -> set[str]:
+        return set(re.findall(r"[a-z]{3,}", text.lower()))
+
+    relevant: list[dict] = []
+    fallback: list[dict] = []
+    seen_words: list[set[str]] = []
+    for p in all_posts:
+        text_lower = " " + p["title"].lower() + " "
+        words = _words(p["title"])
+        if words and any(len(words & sw) / len(words | sw) > 0.6 for sw in seen_words):
+            continue
+        seen_words.append(words)
+        if any(kw in text_lower for kw in SEMI_AI_KEYWORDS) or _CASHTAG_RE.search(p["title"]):
+            relevant.append(p)
+        else:
+            fallback.append(p)
+
+    return (relevant + fallback)[:top_n]
+
+
+def build_social_section(posts: list[dict]) -> str:
+    if not posts:
+        return ""
+    lines = [f"<b>\U0001d54f FinTwit</b> <i>({market_session()})</i>"]
+    for p in posts:
+        source = html.escape(p["source"])
+        title = re.sub(r"^@\w+:\s*", "", p["title"])
+        title = html.escape(title[:220])
+        lines.append(f"• <b>{source}:</b> {title}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +440,15 @@ def main() -> None:
     result = send_telegram(brief)
     msg_id = result.get("result", {}).get("message_id", "?")
     print(f"  Done. Telegram message_id={msg_id}")
+
+    print("  Fetching X/Nitter posts...")
+    social_posts = get_nitter_posts()
+    social_section = build_social_section(social_posts)
+    if social_section:
+        print(f"  Sending social section ({len(social_section)} chars)...")
+        send_telegram(social_section)
+    else:
+        print("  No Nitter posts fetched — skipping social section")
 
 
 if __name__ == "__main__":

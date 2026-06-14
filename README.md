@@ -224,9 +224,16 @@ Green open led by tech; Dow lagging on industrials drag.
 
 👀 One Thing To Watch (pre-market, vs prev close)
 Nvidia supply constraints are the dominant story today...
+
+𝕏 FinTwit (pre-market)
+• @unusual_whales: $NVDA unusual call sweep, 200k contracts...
+• @zerohedge: Fed minutes reveal hawkish tilt on core PCE...
+...
 ```
 
 Every section header carries the same `(session, vs prev close)` label — pre-market, regular hours, after-hours, or market closed — and all sections share one live quote source, so the numbers are directly comparable. Cash indices don't trade pre-market, so until the open Market Pulse shows the last close and its move.
+
+A second Telegram message follows immediately with the **𝕏 FinTwit** section: up to 8 posts pulled from financial Twitter accounts (`@unusual_whales`, `@zerohedge`, `@WatcherGuru`, `@CNBCnow`, `@marketwatch`) via Nitter RSS proxies, filtered to semis/AI/cashtag relevance and deduplicated. The section is silently skipped if all Nitter instances are unreachable.
 
 ---
 
