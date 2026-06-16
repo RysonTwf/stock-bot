@@ -72,6 +72,8 @@ In your GitHub repo go to **Settings → Secrets and variables → Actions → N
 | `TELEGRAM_BOT_TOKEN` | Your BotFather token |
 | `TELEGRAM_CHAT_ID` | Your chat/group ID |
 | `GROQ_API_KEY` | Your Groq API key |
+| `REDDIT_CLIENT_ID` *(optional)* | From a free read-only script app at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) — enables the 📰 Reddit Buzz section |
+| `REDDIT_CLIENT_SECRET` *(optional)* | Same app as above |
 
 ### 5. Push and Enable Actions
 
@@ -211,7 +213,9 @@ python bot.py
 S&P 500: $5,432.10 ▲ +0.84%
 Nasdaq:  $17,891.50 ▲ +1.12%
 Dow:     $39,215.30 ▼ -0.21%
-Green open led by tech; Dow lagging on industrials drag.
+
+🔥 Trending Now (pre-market, vs prev close) (StockTwits)
+NFLX +0.8% | SNAP -1.2% | LUNR +4.0% | WDC -0.5% | XPEV +2.1%
 
 ⭐ Watchlist (pre-market, vs prev close)
 ▲ NVDA: 200.21 (+2.10%)
@@ -227,11 +231,19 @@ Green open led by tech; Dow lagging on industrials drag.
 2. TSMC raises 2025 revenue forecast on AI chip orders
 ...
 
+💬 Retail Chatter (pre-market, vs prev close)
+🗣️ NVDA (+2.1%): Mostly bullish, some "too high already" pushback
+🗣️ TSLA (-0.8%): Mixed — delivery numbers worry vs robotaxi hype
+
 👀 One Thing To Watch (pre-market, vs prev close)
 Nvidia supply constraints are the dominant story today...
 ```
 
 Every section header carries the same `(session, vs prev close)` label — pre-market, regular hours, after-hours, or market closed — and all sections share one live quote source, so the numbers are directly comparable. Cash indices don't trade pre-market, so until the open Market Pulse shows the last close and its move.
+
+🔥 Trending Now and 💬 Retail Chatter are both sourced from StockTwits' public endpoints — no API key or auth needed. Trending Now shows whatever tickers are getting the most attention platform-wide right now (Python-rendered, real prices, no LLM). Retail Chatter takes raw recent posts per watchlist ticker and has Groq summarize the sentiment/theme — the (TICKER, %) tag is still overwritten with the real fetched number afterwards, same as every other annotation in the brief, so the LLM can't garble it.
+
+📰 Reddit Buzz needs `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` (a free read-only script app at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps)) — without them it's silently skipped.
 
 ---
 
@@ -240,5 +252,6 @@ Every section header carries the same `(session, vs prev close)` label — pre-m
 - **Timing**: Edit the `cron` field in `daily_brief.yml`. Use [crontab.guru](https://crontab.guru) to build expressions.
 - **Extra tickers**: Add symbols to the `INDICES` dict in `bot.py` (any valid yfinance ticker).
 - **RSS feeds**: Add more URLs to the `RSS_FEEDS` list.
-- **Reddit subreddits**: Edit `REDDIT_SUBS` in `bot.py`. Posts are fetched via the public JSON API (no auth needed).
+- **Reddit subreddits**: Edit `REDDIT_SUBS` in `bot.py`. Posts are fetched via PRAW (the official Reddit API) — needs `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` env vars, otherwise the section is skipped.
+- **Trending Now / Retail Chatter sources**: `get_trending_symbols()` / `get_stocktwits_buzz()` in `bot.py` hit StockTwits' public endpoints — no key needed, easy to swap subreddits/sources later if StockTwits ever starts blocking requests.
 - **Tone / format**: Edit the prompt in `build_prompt()` inside `bot.py`.

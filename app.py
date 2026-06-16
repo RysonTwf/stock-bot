@@ -2,8 +2,10 @@ import base64
 import html
 import json
 import os
+import sys
 import time
 import threading
+import traceback
 
 import requests
 from flask import Flask, request, abort
@@ -58,6 +60,25 @@ def _dispatch_brief(chat_id: str, slot: int) -> None:
         _ack(chat_id, "⚠️ Failed to trigger brief. Check GitHub Actions secrets.")
 
 
+def _safe(fn):
+    """Run a background-thread handler with a crash net.
+
+    These run off the webhook thread with no supervisor; an uncaught
+    exception used to just die silently, leaving the user with no response
+    at all and no way to tell their command was even received.
+    """
+    def wrapped(chat_id, *args):
+        try:
+            fn(chat_id, *args)
+        except Exception:
+            print(f"  [error] {fn.__name__} crashed:\n{traceback.format_exc()}", file=sys.stderr)
+            try:
+                _ack(chat_id, "⚠️ Something went wrong handling that — try again.")
+            except Exception:
+                pass
+    return wrapped
+
+
 # ---------------------------------------------------------------------------
 # Shared watchlist — stored as watchlist.json in the GitHub repo so both this
 # webhook and the Actions-run brief see the same list
@@ -97,14 +118,14 @@ def _handle_watch(chat_id: str, args: list[str]) -> None:
         _ack(chat_id, "⚠️ Couldn't load the watchlist from GitHub — try again later.")
         return
 
-    added, already, invalid = [], [], []
+    added, already, invalid, full = [], [], [], False
     for raw in args[:10]:
         t = raw.upper().lstrip("$")
         if t in current or t in added:
             already.append(t)
         elif len(current) + len(added) >= wl.MAX_TICKERS:
-            _ack(chat_id, f"🚫 Watchlist is full ({wl.MAX_TICKERS} max) — /unwatch something first.")
-            return
+            full = True
+            break
         elif wl.is_valid_ticker(t):
             added.append(t)
         else:
@@ -121,6 +142,8 @@ def _handle_watch(chat_id: str, args: list[str]) -> None:
         parts.append(f"Already watching: {', '.join(already)}")
     if invalid:
         parts.append(f"⚠️ Not found on Yahoo Finance: {html.escape(', '.join(invalid))}")
+    if full:
+        parts.append(f"🚫 Watchlist is full ({wl.MAX_TICKERS} max) — rest skipped, /unwatch something first.")
     _ack(chat_id, "\n".join(parts) or "Nothing to add.")
 
 
@@ -202,15 +225,15 @@ def webhook():
 
     # Watchlist commands hit GitHub + Yahoo, so run off the webhook thread
     if command == "/watch":
-        threading.Thread(target=_handle_watch, args=(chat_id, args), daemon=True).start()
+        threading.Thread(target=_safe(_handle_watch), args=(chat_id, args), daemon=True).start()
         return "ok"
 
     if command == "/unwatch":
-        threading.Thread(target=_handle_unwatch, args=(chat_id, args), daemon=True).start()
+        threading.Thread(target=_safe(_handle_unwatch), args=(chat_id, args), daemon=True).start()
         return "ok"
 
     if command == "/watchlist":
-        threading.Thread(target=_handle_watchlist, args=(chat_id,), daemon=True).start()
+        threading.Thread(target=_safe(_handle_watchlist), args=(chat_id,), daemon=True).start()
         return "ok"
 
     if command == "/brief":
@@ -228,7 +251,7 @@ def webhook():
         # gets a fast response and won't retry the same update
         slot = len(history) + 1
         _request_log[chat_id] = history + [now]
-        threading.Thread(target=_dispatch_brief, args=(chat_id, slot), daemon=True).start()
+        threading.Thread(target=_safe(_dispatch_brief), args=(chat_id, slot), daemon=True).start()
 
     return "ok"
 

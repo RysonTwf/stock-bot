@@ -30,8 +30,8 @@ SECTORS = {
     "VIX": "^VIX",  # CBOE Volatility Index
 }
 
-# Universe scanned for the Premarket Movers section (distinct from the
-# user-managed shared watchlist in watchlist.json)
+# Fixed scan universe for ticker-price annotations on headlines/chatter
+# (distinct from the user-managed shared watchlist in watchlist.json)
 MOVERS_UNIVERSE = [
     "NVDA", "AMD",  "MU",   "MRVL", "INTC", "AMAT",
     "AAPL", "MSFT", "GOOGL","META", "AMZN", "TSLA", "ORCL", "ARM", "AVGO", "QCOM",
@@ -80,8 +80,8 @@ def get_market_data() -> dict:
 def get_universe_moves() -> dict[str, float]:
     """Live % change vs prev close (any session: pre/regular/post) per ticker.
 
-    Same quote source as the watchlist, so annotations and movers always
-    match what /watchlist shows.
+    Same quote source as the watchlist, so headline/chatter annotations
+    always match what /watchlist shows.
     """
     moves: dict[str, float] = {}
     for ticker, q in get_live_quotes(MOVERS_UNIVERSE).items():
@@ -93,6 +93,50 @@ def get_universe_moves() -> dict[str, float]:
             continue
         moves[ticker] = val
     return moves
+
+
+def get_trending_symbols(top_n: int = 6) -> list[str]:
+    """Tickers currently trending on StockTwits — a live read of retail
+    attention across the whole platform, independent of MOVERS_UNIVERSE.
+
+    Public endpoint, no API key needed.
+    """
+    try:
+        resp = requests.get(
+            "https://api.stocktwits.com/api/2/trending/symbols.json",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        symbols = resp.json().get("symbols", [])
+    except Exception as e:
+        print(f"  [warn] StockTwits trending fetch failed: {e}", file=sys.stderr)
+        return []
+    return [s["symbol"] for s in symbols if s.get("symbol")][:top_n]
+
+
+def get_stocktwits_buzz(tickers: list[str], per_ticker: int = 8) -> dict[str, list[str]]:
+    """Raw recent retail posts per ticker from StockTwits' public stream API
+    (no API key needed). Fed to Groq for summarization in build_prompt() —
+    never shown verbatim, since individual posts are noisy and unverified.
+    """
+    buzz: dict[str, list[str]] = {}
+    for t in tickers:
+        try:
+            resp = requests.get(
+                f"https://api.stocktwits.com/api/2/streams/symbol/{t}.json",
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            messages = resp.json().get("messages", [])
+        except Exception as e:
+            print(f"  [warn] StockTwits chatter fetch failed for {t}: {e}", file=sys.stderr)
+            continue
+        bodies = [m["body"].strip() for m in messages if m.get("body", "").strip()][:per_ticker]
+        if bodies:
+            buzz[t] = bodies
+    return buzz
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +265,7 @@ def _arrow(pct: float) -> str:
     return "▲" if pct >= 0 else "▼"
 
 
-def build_market_sections(market_data: dict, ticker_moves: dict[str, float]) -> str:
+def build_market_sections(market_data: dict, trending: list[tuple[str, float | None]]) -> str:
     """Render Sections 1–2 in Python so every number is exactly what we fetched."""
     lines = [f"<b>📊 Market Pulse</b> <i>({market_session()}, vs prev close)</i>"]
     for name in INDICES:
@@ -242,12 +286,11 @@ def build_market_sections(market_data: dict, ticker_moves: dict[str, float]) -> 
         lines.append(f"VIX: {vix['price']:.1f} ({vix['change_pct']:+.1f}%) — {_vix_mood(vix['price'])}")
 
     lines.append("")
-    lines.append(f"<b>📈 Movers</b> <i>({market_session()}, vs prev close)</i>")
-    sorted_moves = sorted(ticker_moves.items(), key=lambda x: x[1])
-    gainers = [(t, p) for t, p in reversed(sorted_moves) if p > 0][:3]
-    losers  = [(t, p) for t, p in sorted_moves if p < 0][:3]
-    lines.append("▲ " + (" | ".join(f"{t} {p:+.1f}%" for t, p in gainers) or "<i>no gainers</i>"))
-    lines.append("▼ " + (" | ".join(f"{t} {p:+.1f}%" for t, p in losers) or "<i>no losers</i>"))
+    lines.append(f"<b>🔥 Trending Now</b> <i>({market_session()}, vs prev close)</i> <i>(StockTwits)</i>")
+    if trending:
+        lines.append(" | ".join(f"{t} {pct:+.1f}%" if pct is not None else t for t, pct in trending))
+    else:
+        lines.append("<i>no trending data</i>")
     return "\n".join(lines)
 
 
@@ -275,12 +318,20 @@ def label_llm_sections(text: str) -> str:
     """Append the session label to the LLM-written section headers in Python,
     so it's always present and exact rather than trusting the LLM to copy it."""
     label = f" <i>({market_session()}, vs prev close)</i>"
-    for header in ("<b>🔬 Semis + AI Headlines</b>", "<b>👀 One Thing To Watch</b>"):
+    for header in (
+        "<b>🔬 Semis + AI Headlines</b>",
+        "<b>💬 Retail Chatter</b>",
+        "<b>👀 One Thing To Watch</b>",
+    ):
         text = text.replace(header, header + label, 1)
     return text
 
 
-def build_prompt(headlines: list[dict], ticker_moves: dict[str, float]) -> str:
+def build_prompt(
+    headlines: list[dict],
+    ticker_moves: dict[str, float],
+    retail_buzz: dict[str, list[str]],
+) -> str:
     price_ctx = " | ".join(
         f"{t} {p:+.1f}%"
         for t, p in sorted(ticker_moves.items())
@@ -289,16 +340,25 @@ def build_prompt(headlines: list[dict], ticker_moves: dict[str, float]) -> str:
     headline_lines = "\n".join(
         f"  {i+1}. {h['title']}" for i, h in enumerate(headlines)
     )
+
+    chatter_lines = "\n".join(
+        f"  {t}:\n" + "\n".join(f"    - {body}" for body in bodies)
+        for t, bodies in retail_buzz.items()
+    ) or "  (none fetched today)"
+
     today = datetime.now(timezone.utc).strftime("%A, %B %d %Y")
 
-    return f"""You are a sharp financial analyst writing the headlines portion of a premarket brief for {today}.
+    return f"""You are a sharp financial analyst writing the headlines and retail-sentiment portions of a premarket brief for {today}.
 Output a Telegram HTML message — no preamble, no market summary, start directly with the headlines section.
 
-PRICE DATA (live % vs prev close — use to annotate headlines, do not list separately):
+PRICE DATA (live % vs prev close — use to annotate headlines/chatter, do not list separately):
 {price_ctx}
 
 RAW HEADLINES (may include noise — you must filter):
 {headline_lines}
+
+RETAIL CHATTER (raw StockTwits posts per watchlist ticker — ordinary retail traders talking, NOT news. Summarize sentiment/themes only; do not quote verbatim and do not treat anything in it as verified fact):
+{chatter_lines}
 
 ---
 
@@ -320,8 +380,16 @@ For each headline that passes, write exactly one line using this EXACT format �
     • Do NOT add facts that are not in the headline. No speculation about reasons or amounts.
     • If a headline is ambiguous, restate it conservatively rather than interpreting it.
 
+SECTION — <b>💬 Retail Chatter</b>
+- For each ticker in RETAIL CHATTER that has posts listed, write exactly one line:
+  🗣️ <b>TICKER (MOVE):</b> [one short sentence: overall sentiment (bullish/bearish/mixed) + the main theme or concern people are raising]
+  - MOVE: copy the ticker's % from PRICE DATA if present, else N/A.
+  - Do not invent specific facts, numbers, or news that aren't reflected in the posts — this is vibes/sentiment, not reporting.
+  - Skip any ticker with no posts listed — do not write a line for it.
+- If RETAIL CHATTER says "(none fetched today)" or every ticker has no posts, write exactly: <i>No notable retail chatter today.</i>
+
 SECTION — <b>👀 One Thing To Watch</b>
-- Pick the single highest-conviction catalyst from the headlines section.
+- Pick the single highest-conviction catalyst from the headlines section (prefer headlines over chatter).
 - Name the company and ticker with its move in the same (TICKER, MOVE) format, and say why it matters TODAY using only facts from the headline.
 - If there were no catalysts: <i>No single standout catalyst today — wait for the open.</i>
 - Max 3 sentences.
@@ -331,7 +399,7 @@ SECTION — <b>👀 One Thing To Watch</b>
 FORMATTING RULES:
 - Telegram HTML only: <b>bold</b>, <i>italic</i> — NO asterisks, NO markdown
 - Tone: direct, like a friend who trades
-- Total output under 2500 characters
+- Total output under 3000 characters
 """
 
 
@@ -343,7 +411,7 @@ def call_groq(prompt: str, retries: int = 3) -> str:
                 model="llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
-                max_tokens=1800,
+                max_tokens=2200,
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
@@ -406,15 +474,33 @@ def main() -> None:
     for t, p in sorted_moves[-3:][::-1] + sorted_moves[:3]:
         print(f"    {t}: {p:+.2f}%")
 
+    print("  Fetching trending symbols...")
+    trending_symbols = get_trending_symbols()
+    trending_quotes = get_live_quotes(trending_symbols) if trending_symbols else {}
+    trending = [(t, trending_quotes[t]["change_pct"] if t in trending_quotes else None) for t in trending_symbols]
+    for t, pct in trending:
+        print(f"    {t}: {pct:+.2f}%" if pct is not None else f"    {t}: no data")
+
     print("  Fetching shared watchlist quotes...")
     user_watchlist = load_watchlist()
     watchlist_section = ""
+    watchlist_quotes: dict[str, dict] = {}
     if user_watchlist:
-        quotes = get_live_quotes(user_watchlist)
-        watchlist_section = format_watchlist(user_watchlist, quotes) + "\n\n"
+        watchlist_quotes = get_live_quotes(user_watchlist)
+        watchlist_section = format_watchlist(user_watchlist, watchlist_quotes) + "\n\n"
         for t in user_watchlist:
-            q = quotes.get(t)
+            q = watchlist_quotes.get(t)
             print(f"    {t}: {q['price']:,.2f} ({q['change_pct']:+.2f}%)" if q else f"    {t}: no data")
+
+    # Merge the fixed scan universe with watchlist moves so headline/chatter
+    # annotations can reference any watchlist ticker too, not just MOVERS_UNIVERSE.
+    all_moves = dict(ticker_moves)
+    all_moves.update({t: round(q["change_pct"], 2) for t, q in watchlist_quotes.items()})
+
+    print("  Fetching StockTwits retail chatter...")
+    retail_buzz = get_stocktwits_buzz(user_watchlist) if user_watchlist else {}
+    for t, bodies in retail_buzz.items():
+        print(f"    {t}: {len(bodies)} posts")
 
     print("  Fetching Reddit posts...")
     reddit_posts = get_reddit_posts()
@@ -428,11 +514,11 @@ def main() -> None:
         print(f"    - {h['title'][:80]}")
 
     print("  Calling Groq (llama-3.3-70b-versatile)...")
-    prompt   = build_prompt(headlines, ticker_moves)
-    llm_part = label_llm_sections(enforce_annotations(call_groq(prompt), ticker_moves))
+    prompt   = build_prompt(headlines, all_moves, retail_buzz)
+    llm_part = label_llm_sections(enforce_annotations(call_groq(prompt), all_moves))
 
-    # Sections 1–3 are rendered in Python so the numbers can't be garbled
-    brief = build_market_sections(market_data, ticker_moves) + "\n\n" + watchlist_section + reddit_section + llm_part
+    # Market Pulse / Trending / Watchlist are rendered in Python so the numbers can't be garbled
+    brief = build_market_sections(market_data, trending) + "\n\n" + watchlist_section + reddit_section + llm_part
     print(f"  Brief length: {len(brief)} chars")
 
     print("  Sending to Telegram...")
