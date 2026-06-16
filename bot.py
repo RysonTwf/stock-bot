@@ -40,13 +40,7 @@ MOVERS_UNIVERSE = [
 ]
 
 REDDIT_SUBS = ["wallstreetbets", "stocks", "investing"]
-
-# StockTwits' Cloudflare bot-management 403s requests from GitHub Actions'
-# datacenter IPs, so these calls are proxied through the PythonAnywhere
-# webhook (app.py), whose free-tier outbound IP has api.stocktwits.com
-# allowlisted. Optional: both sections below just no-op without it.
-STOCKTWITS_PROXY_BASE   = "https://ryson.pythonanywhere.com/proxy/stocktwits"
-STOCKTWITS_PROXY_SECRET = os.environ.get("STOCKTWITS_PROXY_SECRET", "")
+TICKER_MENTION_RE = re.compile(r"\$([A-Z]{1,5})\b")
 
 RSS_FEEDS = [
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,AMD,MU,MRVL,INTC,AMAT&region=US&lang=en-US",
@@ -102,79 +96,42 @@ def get_universe_moves() -> dict[str, float]:
     return moves
 
 
-def get_trending_symbols(top_n: int = 6) -> list[str]:
-    """Tickers currently trending on StockTwits — a live read of retail
-    attention across the whole platform, independent of MOVERS_UNIVERSE.
-
-    Routed through the PythonAnywhere proxy (see STOCKTWITS_PROXY_BASE).
-    """
-    if not STOCKTWITS_PROXY_SECRET:
-        print("  [warn] STOCKTWITS_PROXY_SECRET not set — skipping trending", file=sys.stderr)
-        return []
-    try:
-        resp = requests.get(
-            f"{STOCKTWITS_PROXY_BASE}/trending",
-            params={"secret": STOCKTWITS_PROXY_SECRET},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        symbols = resp.json().get("symbols", [])
-    except Exception as e:
-        print(f"  [warn] StockTwits trending fetch failed: {e}", file=sys.stderr)
-        return []
-    return [s["symbol"] for s in symbols if s.get("symbol")][:top_n]
-
-
-def get_stocktwits_buzz(tickers: list[str], per_ticker: int = 8) -> dict[str, list[str]]:
-    """Raw recent retail posts per ticker from StockTwits, via the
-    PythonAnywhere proxy. Fed to Groq for summarization in build_prompt() —
-    never shown verbatim, since individual posts are noisy and unverified.
-    """
-    if not STOCKTWITS_PROXY_SECRET:
-        print("  [warn] STOCKTWITS_PROXY_SECRET not set — skipping retail chatter", file=sys.stderr)
-        return {}
-    buzz: dict[str, list[str]] = {}
-    for t in tickers:
-        try:
-            resp = requests.get(
-                f"{STOCKTWITS_PROXY_BASE}/stream/{t}",
-                params={"secret": STOCKTWITS_PROXY_SECRET},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            messages = resp.json().get("messages", [])
-        except Exception as e:
-            print(f"  [warn] StockTwits chatter fetch failed for {t}: {e}", file=sys.stderr)
-            continue
-        bodies = [m["body"].strip() for m in messages if m.get("body", "").strip()][:per_ticker]
-        if bodies:
-            buzz[t] = bodies
-    return buzz
-
-
 # ---------------------------------------------------------------------------
 # Reddit posts (via PRAW — official API, not blocked by Reddit)
+#
+# StockTwits was tried first for Trending Now / Retail Chatter (no API key)
+# but its Cloudflare bot-management 403s anonymous requests from *any*
+# hosting-provider IP — confirmed against both GitHub Actions and a
+# PythonAnywhere-routed proxy on 2026-06-16. Reddit's official authenticated
+# API doesn't hit that wall, so both sections are sourced from it instead.
 # ---------------------------------------------------------------------------
-def get_reddit_posts(top_n: int = 5) -> list[dict]:
-    """Fetch hot posts from finance subreddits via PRAW (Reddit official API).
+def _reddit_client():
+    """Build a PRAW client from REDDIT_CLIENT_ID/SECRET, or None if unset.
 
-    Requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET env vars (read-only
-    script app registered at reddit.com/prefs/apps). Silently returns [] if
-    credentials are absent so the section is just skipped in dev without them.
+    Requires a read-only script app registered at reddit.com/prefs/apps.
     """
-    import praw  # optional dependency — only imported when credentials exist
-
     client_id     = os.environ.get("REDDIT_CLIENT_ID", "")
     client_secret = os.environ.get("REDDIT_CLIENT_SECRET", "")
     if not client_id or not client_secret:
-        print("  [warn] Reddit: REDDIT_CLIENT_ID/SECRET not set — skipping", file=sys.stderr)
-        return []
-
-    reddit = praw.Reddit(
+        return None
+    import praw  # optional dependency — only imported when credentials exist
+    return praw.Reddit(
         client_id=client_id,
         client_secret=client_secret,
         user_agent="stockbot/1.0 by RysonTwf",
     )
+
+
+def get_reddit_posts(top_n: int = 5) -> list[dict]:
+    """Fetch hot posts from finance subreddits via PRAW (Reddit official API).
+
+    Silently returns [] if REDDIT_CLIENT_ID/SECRET are absent so the section
+    is just skipped without them.
+    """
+    reddit = _reddit_client()
+    if reddit is None:
+        print("  [warn] Reddit: REDDIT_CLIENT_ID/SECRET not set — skipping", file=sys.stderr)
+        return []
 
     posts: list[dict] = []
     for sub in REDDIT_SUBS:
@@ -210,6 +167,40 @@ def get_reddit_posts(top_n: int = 5) -> list[dict]:
             fallback.append(p)
 
     return (relevant + fallback)[:top_n]
+
+
+def get_trending_symbols(posts: list[dict], top_n: int = 6) -> list[str]:
+    """Tickers most frequently $cashtag-mentioned across today's hot posts
+    from REDDIT_SUBS — a live read of retail attention, derived from the
+    same pool already fetched for Reddit Buzz (no extra API calls).
+    """
+    counts: dict[str, int] = {}
+    for p in posts:
+        for sym in set(TICKER_MENTION_RE.findall(p["title"])):
+            counts[sym] = counts.get(sym, 0) + 1
+    return [t for t, _ in sorted(counts.items(), key=lambda x: -x[1])][:top_n]
+
+
+def get_reddit_ticker_buzz(tickers: list[str], per_ticker: int = 5) -> dict[str, list[str]]:
+    """Raw recent Reddit post titles mentioning each watchlist ticker, via a
+    PRAW search across REDDIT_SUBS. Fed to Groq for summarization in
+    build_prompt() — never shown verbatim, since individual posts are noisy.
+    """
+    reddit = _reddit_client()
+    if reddit is None or not tickers:
+        return {}
+    buzz: dict[str, list[str]] = {}
+    subs = "+".join(REDDIT_SUBS)
+    for t in tickers:
+        try:
+            results = reddit.subreddit(subs).search(f"{t} OR ${t}", sort="new", time_filter="week", limit=per_ticker)
+            titles = [p.title.strip() for p in results if not p.stickied]
+        except Exception as e:
+            print(f"  [warn] Reddit ticker search failed for {t}: {e}", file=sys.stderr)
+            continue
+        if titles:
+            buzz[t] = titles
+    return buzz
 
 
 def build_reddit_section(posts: list[dict]) -> str:
@@ -299,7 +290,7 @@ def build_market_sections(market_data: dict, trending: list[tuple[str, float | N
         lines.append(f"VIX: {vix['price']:.1f} ({vix['change_pct']:+.1f}%) — {_vix_mood(vix['price'])}")
 
     lines.append("")
-    lines.append(f"<b>🔥 Trending Now</b> <i>({market_session()}, vs prev close)</i> <i>(StockTwits)</i>")
+    lines.append(f"<b>🔥 Trending Now</b> <i>({market_session()}, vs prev close)</i> <i>(wsb · stocks · investing)</i>")
     if trending:
         lines.append(" | ".join(f"{t} {pct:+.1f}%" if pct is not None else t for t, pct in trending))
     else:
@@ -370,7 +361,7 @@ PRICE DATA (live % vs prev close — use to annotate headlines/chatter, do not l
 RAW HEADLINES (may include noise — you must filter):
 {headline_lines}
 
-RETAIL CHATTER (raw StockTwits posts per watchlist ticker — ordinary retail traders talking, NOT news. Summarize sentiment/themes only; do not quote verbatim and do not treat anything in it as verified fact):
+RETAIL CHATTER (raw Reddit post titles per watchlist ticker — ordinary retail traders talking, NOT news. Summarize sentiment/themes only; do not quote verbatim and do not treat anything in it as verified fact):
 {chatter_lines}
 
 ---
@@ -487,8 +478,15 @@ def main() -> None:
     for t, p in sorted_moves[-3:][::-1] + sorted_moves[:3]:
         print(f"    {t}: {p:+.2f}%")
 
-    print("  Fetching trending symbols...")
-    trending_symbols = get_trending_symbols()
+    print("  Fetching Reddit posts...")
+    all_reddit_posts = get_reddit_posts(top_n=50)
+    reddit_posts = all_reddit_posts[:5]
+    reddit_section = build_reddit_section(reddit_posts) + "\n\n" if reddit_posts else ""
+    for p in reddit_posts:
+        print(f"    r/{p['sub']}: {p['title'][:80]}")
+
+    print("  Deriving trending symbols from Reddit chatter...")
+    trending_symbols = get_trending_symbols(all_reddit_posts)
     trending_quotes = get_live_quotes(trending_symbols) if trending_symbols else {}
     trending = [(t, trending_quotes[t]["change_pct"] if t in trending_quotes else None) for t in trending_symbols]
     for t, pct in trending:
@@ -510,16 +508,10 @@ def main() -> None:
     all_moves = dict(ticker_moves)
     all_moves.update({t: round(q["change_pct"], 2) for t, q in watchlist_quotes.items()})
 
-    print("  Fetching StockTwits retail chatter...")
-    retail_buzz = get_stocktwits_buzz(user_watchlist) if user_watchlist else {}
+    print("  Fetching Reddit retail chatter per watchlist ticker...")
+    retail_buzz = get_reddit_ticker_buzz(user_watchlist) if user_watchlist else {}
     for t, bodies in retail_buzz.items():
         print(f"    {t}: {len(bodies)} posts")
-
-    print("  Fetching Reddit posts...")
-    reddit_posts = get_reddit_posts()
-    reddit_section = build_reddit_section(reddit_posts) + "\n\n" if reddit_posts else ""
-    for p in reddit_posts:
-        print(f"    r/{p['sub']}: {p['title'][:80]}")
 
     print("  Fetching RSS headlines...")
     headlines = get_headlines()
