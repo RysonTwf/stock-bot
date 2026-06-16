@@ -49,13 +49,18 @@ def market_session(now: datetime | None = None) -> str:
 
 
 def is_valid_ticker(ticker: str) -> bool:
-    """Cheap sanity check that yfinance knows this symbol."""
+    """Cheap sanity check that this ticker has live quote data.
+
+    Goes through the same chart-API-first/yfinance-fallback path as quotes
+    (_fetch_quote) rather than yf.Ticker().history() directly: the yfinance
+    library needs its own crumb/cookie handshake with Yahoo that has proven
+    flaky on some hosts (e.g. PythonAnywhere) even while the plain chart API
+    _fetch_quote_direct uses keeps working — that mismatch was marking real
+    tickers like NVDA as "not found".
+    """
     if not TICKER_RE.fullmatch(ticker):
         return False
-    try:
-        return not yf.Ticker(ticker).history(period="5d", interval="1d").empty
-    except Exception:
-        return False
+    return _fetch_quote(ticker) is not None
 
 
 def _fetch_quote_direct(ticker: str) -> dict | None:
