@@ -41,6 +41,13 @@ MOVERS_UNIVERSE = [
 
 REDDIT_SUBS = ["wallstreetbets", "stocks", "investing"]
 
+# StockTwits' Cloudflare bot-management 403s requests from GitHub Actions'
+# datacenter IPs, so these calls are proxied through the PythonAnywhere
+# webhook (app.py), whose free-tier outbound IP has api.stocktwits.com
+# allowlisted. Optional: both sections below just no-op without it.
+STOCKTWITS_PROXY_BASE   = "https://ryson.pythonanywhere.com/proxy/stocktwits"
+STOCKTWITS_PROXY_SECRET = os.environ.get("STOCKTWITS_PROXY_SECRET", "")
+
 RSS_FEEDS = [
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,AMD,MU,MRVL,INTC,AMAT&region=US&lang=en-US",
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL,MSFT,GOOGL,META,AMZN,TSLA,ORCL,ARM,AVGO,QCOM&region=US&lang=en-US",
@@ -99,13 +106,16 @@ def get_trending_symbols(top_n: int = 6) -> list[str]:
     """Tickers currently trending on StockTwits — a live read of retail
     attention across the whole platform, independent of MOVERS_UNIVERSE.
 
-    Public endpoint, no API key needed.
+    Routed through the PythonAnywhere proxy (see STOCKTWITS_PROXY_BASE).
     """
+    if not STOCKTWITS_PROXY_SECRET:
+        print("  [warn] STOCKTWITS_PROXY_SECRET not set — skipping trending", file=sys.stderr)
+        return []
     try:
         resp = requests.get(
-            "https://api.stocktwits.com/api/2/trending/symbols.json",
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=10,
+            f"{STOCKTWITS_PROXY_BASE}/trending",
+            params={"secret": STOCKTWITS_PROXY_SECRET},
+            timeout=15,
         )
         resp.raise_for_status()
         symbols = resp.json().get("symbols", [])
@@ -116,17 +126,20 @@ def get_trending_symbols(top_n: int = 6) -> list[str]:
 
 
 def get_stocktwits_buzz(tickers: list[str], per_ticker: int = 8) -> dict[str, list[str]]:
-    """Raw recent retail posts per ticker from StockTwits' public stream API
-    (no API key needed). Fed to Groq for summarization in build_prompt() —
+    """Raw recent retail posts per ticker from StockTwits, via the
+    PythonAnywhere proxy. Fed to Groq for summarization in build_prompt() —
     never shown verbatim, since individual posts are noisy and unverified.
     """
+    if not STOCKTWITS_PROXY_SECRET:
+        print("  [warn] STOCKTWITS_PROXY_SECRET not set — skipping retail chatter", file=sys.stderr)
+        return {}
     buzz: dict[str, list[str]] = {}
     for t in tickers:
         try:
             resp = requests.get(
-                f"https://api.stocktwits.com/api/2/streams/symbol/{t}.json",
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=10,
+                f"{STOCKTWITS_PROXY_BASE}/stream/{t}",
+                params={"secret": STOCKTWITS_PROXY_SECRET},
+                timeout=15,
             )
             resp.raise_for_status()
             messages = resp.json().get("messages", [])

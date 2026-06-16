@@ -8,14 +8,15 @@ import threading
 import traceback
 
 import requests
-from flask import Flask, request, abort
+from flask import Flask, jsonify, request, abort
 
 import watchlist as wl
 
 app = Flask(__name__)
 
-TELEGRAM_BOT_TOKEN    = os.environ["TELEGRAM_BOT_TOKEN"]
-GITHUB_PAT            = os.environ["GITHUB_PAT"]
+TELEGRAM_BOT_TOKEN     = os.environ["TELEGRAM_BOT_TOKEN"]
+GITHUB_PAT             = os.environ["GITHUB_PAT"]
+STOCKTWITS_PROXY_SECRET = os.environ.get("STOCKTWITS_PROXY_SECRET", "")
 GITHUB_REPO           = "RysonTwf/stock-bot"
 WORKFLOW_FILE         = "daily_brief.yml"
 WATCHLIST_API_URL     = f"https://api.github.com/repos/{GITHUB_REPO}/contents/watchlist.json"
@@ -182,6 +183,53 @@ def _handle_watchlist(chat_id: str) -> None:
         return
     quotes = wl.get_live_quotes(tickers)
     _ack(chat_id, wl.format_watchlist(tickers, quotes))
+
+
+# ---------------------------------------------------------------------------
+# StockTwits proxy — bot.py (GitHub Actions) gets 403'd by StockTwits'
+# Cloudflare bot-management when calling it directly (Actions runners use
+# flagged datacenter IPs). PythonAnywhere's free-tier outbound proxy has
+# api.stocktwits.com allowlisted and isn't flagged, so bot.py routes its
+# StockTwits calls through this webhook instead. Locked behind a shared
+# secret so this can't be discovered and used as an open relay.
+# ---------------------------------------------------------------------------
+def _check_proxy_secret() -> bool:
+    return bool(STOCKTWITS_PROXY_SECRET) and request.args.get("secret") == STOCKTWITS_PROXY_SECRET
+
+
+@app.route("/proxy/stocktwits/trending", methods=["GET"])
+def proxy_stocktwits_trending():
+    if not _check_proxy_secret():
+        abort(403)
+    try:
+        resp = requests.get(
+            "https://api.stocktwits.com/api/2/trending/symbols.json",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return jsonify(resp.json())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/proxy/stocktwits/stream/<ticker>", methods=["GET"])
+def proxy_stocktwits_stream(ticker):
+    if not _check_proxy_secret():
+        abort(403)
+    ticker = ticker.upper()
+    if not wl.TICKER_RE.fullmatch(ticker):
+        abort(400)
+    try:
+        resp = requests.get(
+            f"https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return jsonify(resp.json())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
 
 
 @app.route(f"/webhook/{TELEGRAM_BOT_TOKEN}", methods=["POST"])
