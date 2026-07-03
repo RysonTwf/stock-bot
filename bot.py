@@ -143,6 +143,8 @@ def get_reddit_posts(top_n: int = 5) -> list[dict]:
 
     for p in sorted(posts, key=lambda x: x["score"], reverse=True):
         title_lower = " " + p["title"].lower() + " "
+        if "cramer" in title_lower:
+            continue  # Jim Cramer opinion/hype pieces, not real catalysts
         words = _words(p["title"])
         if words and any(len(words & kw) / len(words | kw) > 0.6 for kw in kept_words):
             continue
@@ -190,6 +192,8 @@ def get_headlines(max_per_feed: int = 30, top_n: int = 20) -> list[dict]:
 
     for h in all_headlines:
         title_lower = " " + h["title"].lower() + " "
+        if "cramer" in title_lower:
+            continue  # Jim Cramer opinion/hype pieces, not real catalysts
         words = _words(h["title"])
         # Skip near-duplicates: same story rewritten by another outlet
         if words and any(
