@@ -16,12 +16,55 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 import yfinance as yf
+from pandas.tseries.holiday import (
+    AbstractHolidayCalendar,
+    GoodFriday,
+    Holiday,
+    USLaborDay,
+    USMartinLutherKingJr,
+    USMemorialDay,
+    USPresidentsDay,
+    USThanksgivingDay,
+    nearest_workday,
+)
 
 WATCHLIST_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "watchlist.json")
 MAX_TICKERS = 30
 TICKER_RE = re.compile(r"[A-Z0-9.\-]{1,10}")
 
 _ET = ZoneInfo("America/New_York")
+
+
+class _NYSEHolidayCalendar(AbstractHolidayCalendar):
+    """Fixed, recurring NYSE full-market-closure holidays.
+
+    Weekend-adjacent holidays (e.g. Independence Day) use nearest_workday, matching
+    NYSE's own observance rule: Saturday -> preceding Friday, Sunday -> following
+    Monday. This does not cover one-off ad-hoc closures (e.g. 9/11, storms,
+    national days of mourning), which are rare and were already unhandled before.
+    """
+
+    rules = [
+        Holiday("New Year's Day", month=1, day=1, observance=nearest_workday),
+        USMartinLutherKingJr,
+        USPresidentsDay,
+        GoodFriday,
+        USMemorialDay,
+        Holiday("Juneteenth", month=6, day=19, observance=nearest_workday, start_date="2022-01-01"),
+        Holiday("Independence Day", month=7, day=4, observance=nearest_workday),
+        USLaborDay,
+        USThanksgivingDay,
+        Holiday("Christmas Day", month=12, day=25, observance=nearest_workday),
+    ]
+
+
+_NYSE_HOLIDAYS = _NYSEHolidayCalendar()
+
+
+def _is_market_holiday(d: date) -> bool:
+    ts = pd.Timestamp(d)
+    holidays = _NYSE_HOLIDAYS.holidays(start=ts, end=ts)
+    return len(holidays) > 0
 
 
 def load_watchlist() -> list[str]:
@@ -36,7 +79,7 @@ def load_watchlist() -> list[str]:
 
 def market_session(now: datetime | None = None) -> str:
     now = now or datetime.now(_ET)
-    if now.weekday() >= 5:
+    if now.weekday() >= 5 or _is_market_holiday(now.date()):
         return "market closed"
     minutes = now.hour * 60 + now.minute
     if 4 * 60 <= minutes < 9 * 60 + 30:
