@@ -72,8 +72,6 @@ In your GitHub repo go to **Settings → Secrets and variables → Actions → N
 | `TELEGRAM_BOT_TOKEN` | Your BotFather token |
 | `TELEGRAM_CHAT_ID` | Your chat/group ID |
 | `GROQ_API_KEY` | Your Groq API key |
-| `REDDIT_CLIENT_ID` *(optional)* | From a free read-only script app at [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) — enables the 📰 Reddit Buzz section |
-| `REDDIT_CLIENT_SECRET` *(optional)* | Same app as above |
 
 ### 5. Push and Enable Actions
 
@@ -218,11 +216,6 @@ Dow:     $39,215.30 ▼ -0.21%
 ▲ NVDA: 200.21 (+2.10%)
 ▼ TSLA: 384.77 (-0.83%)
 
-📰 Reddit Buzz (wsb · stocks · investing)
-• NVDA short squeeze incoming? (r/wallstreetbets, ↑4,231)
-• TSMC beats Q2 estimates, raises guidance (r/stocks, ↑1,872)
-...
-
 🔬 Semis + AI Headlines (pre-market, vs prev close)
 1. Nvidia's Blackwell GPU demand outstrips supply into Q3
 2. TSMC raises 2025 revenue forecast on AI chip orders
@@ -241,5 +234,4 @@ Every section header carries the same `(session, vs prev close)` label — pre-m
 - **Timing**: Edit the `cron` field in `daily_brief.yml`. Use [crontab.guru](https://crontab.guru) to build expressions.
 - **Extra tickers**: Add symbols to the `INDICES` dict in `bot.py` (any valid yfinance ticker).
 - **RSS feeds**: Add more URLs to the `RSS_FEEDS` list.
-- **Reddit subreddits**: Edit `REDDIT_SUBS` in `bot.py`. Posts are fetched via PRAW (the official Reddit API) — needs `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` env vars, otherwise the section is skipped.
 - **Tone / format**: Edit the prompt in `build_prompt()` inside `bot.py`.

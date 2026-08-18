@@ -344,10 +344,11 @@ def call_groq(prompt: str, retries: int = 3) -> str:
     for attempt in range(1, retries + 1):
         try:
             resp = client.chat.completions.create(
-                model="groq/compound",
+                model="openai/gpt-oss-20b",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
                 max_tokens=1800,
+                reasoning_effort="low",
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
@@ -431,7 +432,7 @@ def main() -> None:
     for h in headlines:
         print(f"    - {h['title'][:80]}")
 
-    print("  Calling Groq (groq/compound)...")
+    print("  Calling Groq (openai/gpt-oss-20b)...")
     prompt   = build_prompt(headlines, ticker_moves)
     llm_part = label_llm_sections(enforce_annotations(call_groq(prompt), ticker_moves))
 
