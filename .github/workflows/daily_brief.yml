@@ -2,8 +2,8 @@ name: Daily Stock Brief
 
 on:
   schedule:
-    # 08:00 UTC = 16:00 SGT (UTC+8), daily
-    - cron: '0 8 * * *'
+    # 08:00 UTC = 16:00 SGT (UTC+8), Mon–Fri
+    - cron: '0 8 * * 1-5'
   workflow_dispatch:
     inputs:
       chat_id:

@@ -1,6 +1,6 @@
 # Daily Stock Market Brief Bot
 
-A Telegram bot that sends a market briefing every weekday at 7:00 PM SGT (11:00 UTC), covering S&P 500, Nasdaq, Dow, plus top semiconductor and AI/Big Tech headlines summarised by Groq's LLaMA 3.3 70B.
+A Telegram bot that sends a market briefing every weekday at 4:00 PM SGT (08:00 UTC), covering S&P 500, Nasdaq, Dow, plus top semiconductor and AI/Big Tech headlines summarised by Groq's LLaMA 3.3 70B.
 
 Also supports on-demand Telegram commands via a Flask webhook hosted on PythonAnywhere, including a shared watchlist with live pre/post-market prices.
 
@@ -32,7 +32,8 @@ The watchlist is shared by everyone in the group (single-group bot). It is store
 | `watchlist.json` | The shared watchlist itself (committed by the webhook via GitHub API) |
 | `tests/test_prev_close.py` | Standalone test (no pytest) for prev-close selection; run it directly for a live AMD/NVDA sanity check |
 | `requirements.txt` | Python dependencies |
-| `.github/workflows/daily_brief.yml` | GitHub Actions scheduler (Mon–Fri, 11:00 UTC) |
+| `.github/workflows/daily_brief.yml` | GitHub Actions scheduler (Mon–Fri, 08:00 UTC) |
+| `.github/workflows/keepalive.yml` | Monthly empty commit so GitHub doesn't disable the schedule after 60 days of inactivity |
 | `CLAUDE.md` | Architecture notes for AI-assisted development |
 
 ---

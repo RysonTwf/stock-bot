@@ -1,0 +1,25 @@
+name: Keepalive
+
+# GitHub disables scheduled workflows after 60 days without repo activity.
+# An empty commit once a month keeps the daily brief schedule alive.
+on:
+  schedule:
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Push empty commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive"
+          git push
