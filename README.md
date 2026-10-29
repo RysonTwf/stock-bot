@@ -1,6 +1,6 @@
 # Daily Stock Market Brief Bot
 
-A Telegram bot that sends a market briefing every US trading day at the 9:30 AM New York open (9:30 PM SGT during US daylight saving time, 10:30 PM SGT otherwise), covering S&P 500, Nasdaq, Dow, plus top semiconductor and AI/Big Tech headlines summarised by Groq's LLaMA 3.3 70B.
+A Telegram bot that sends a market briefing every weekday at 4:00 PM SGT (08:00 UTC), covering S&P 500, Nasdaq, Dow, plus top semiconductor and AI/Big Tech headlines summarised by Groq's LLaMA 3.3 70B.
 
 Also supports on-demand Telegram commands via a Flask webhook hosted on PythonAnywhere, including a shared watchlist with live pre/post-market prices.
 
@@ -31,7 +31,6 @@ The watchlist is shared by everyone in the group (single-group bot). It is store
 | `watchlist.py` | Shared watchlist module — live quotes (pre/post market), validation, formatting |
 | `watchlist.json` | The shared watchlist itself (committed by the webhook via GitHub API) |
 | `tests/test_prev_close.py` | Standalone test (no pytest) for prev-close selection; run it directly for a live AMD/NVDA sanity check |
-| `trigger_brief.py` | Dispatches the daily brief at the US market open — run as a PythonAnywhere scheduled task |
 | `requirements.txt` | Python dependencies |
 | `.github/workflows/daily_brief.yml` | GitHub Actions scheduler (Mon–Fri, 08:00 UTC) |
 | `.github/workflows/keepalive.yml` | Monthly empty commit so GitHub doesn't disable the schedule after 60 days of inactivity |
@@ -171,20 +170,6 @@ https://api.telegram.org/bot<YOUR_TOKEN>/getWebhookInfo
 ### 6. Test it
 
 Send `/brief` to your bot in Telegram. You'll get an instant "⏳ Fetching..." acknowledgement followed by the full brief within ~15 seconds.
-
-### 7. Schedule the daily brief on time
-
-GitHub's own cron schedule often starts hours late, but manually dispatched runs start within seconds. So PythonAnywhere triggers the brief at the US market open (9:30 AM New York) instead:
-
-1. Go to the **Tasks** tab.
-2. Set the time to **13:30** (PythonAnywhere task times are UTC). That's the open during US daylight saving time; the rest of the year the open is 14:30 UTC and the script waits the extra hour itself.
-3. Set the command to:
-   ```
-   GITHUB_PAT=your_github_pat_here python3.10 /home/YOUR_USERNAME/stocks/trigger_brief.py
-   ```
-4. Click **Create**. The task runs daily; the script skips weekends and NYSE holidays.
-
-The task log should say `Daily brief dispatched`.
 
 ### Deploying code changes
 
