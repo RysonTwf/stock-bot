@@ -295,7 +295,7 @@ def build_prompt(headlines: list[dict], ticker_moves: dict[str, float]) -> str:
     )
     today = datetime.now(timezone.utc).strftime("%A, %B %d %Y")
 
-    return f"""You are a sharp financial analyst writing the headlines portion of a premarket brief for {today}.
+    return f"""You are a sharp financial analyst writing the headlines portion of a market-open brief for {today}.
 Output a Telegram HTML message — no preamble, no market summary, start directly with the headlines section.
 
 PRICE DATA (live % vs prev close — use to annotate headlines, do not list separately):
@@ -327,7 +327,7 @@ For each headline that passes, write exactly one line using this EXACT format �
 SECTION — <b>👀 One Thing To Watch</b>
 - Pick the single highest-conviction catalyst from the headlines section.
 - Name the company and ticker with its move in the same (TICKER, MOVE) format, and say why it matters TODAY using only facts from the headline.
-- If there were no catalysts: <i>No single standout catalyst today — wait for the open.</i>
+- If there were no catalysts: <i>No single standout catalyst today.</i>
 - Max 3 sentences.
 
 ---
