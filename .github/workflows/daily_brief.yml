@@ -2,8 +2,10 @@ name: Daily Stock Brief
 
 on:
   schedule:
-    # 08:00 UTC = 16:00 SGT (UTC+8), Mon–Fri
-    - cron: '0 8 * * 1-5'
+    # 08:30 UTC, Mon–Fri. GitHub has been starting scheduled runs 5–7 hours
+    # late, so this lands around the US open (14:30 UTC / 22:30 SGT outside
+    # US daylight saving time).
+    - cron: '30 8 * * 1-5'
   workflow_dispatch:
     inputs:
       chat_id:
