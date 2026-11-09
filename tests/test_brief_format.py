@@ -29,6 +29,7 @@ LOW_VALUE = [
     "Nvidia, Palantir, and Tesla Are Sending Shockwaves Through Wall Street With This $53 Billion Warning",
     "AMD Shed Nearly 30% in 30 Days: This Respected Wall Street Team Expects 75% Gains For Those Who Act Now",
     "Nvidia, AMD, Intel, Berkshire Hathaway, and More Stocks That Explain Today's Market",
+    "Buy, Sell, or Hold? Monday's Top Upgrades and Downgrades: Advanced Micro Devices, Airbnb, Nvidia, and More",
 ]
 
 REAL_NEWS = [

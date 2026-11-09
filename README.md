@@ -1,6 +1,6 @@
 # Daily Stock Market Brief Bot
 
-A Telegram bot that sends a market briefing every weekday at the US market open (14:30 UTC, 10:30 PM SGT; GitHub can start scheduled runs a few minutes late), covering S&P 500, Nasdaq, Dow, plus a two-line Big Picture and the top semiconductor and AI/Big Tech headlines picked and summarised by Groq's `openai/gpt-oss-20b`.
+A Telegram bot that sends a market briefing every weekday at the US market open (14:30 UTC, 10:30 PM SGT; GitHub can start scheduled runs a few minutes late), covering S&P 500, Nasdaq, Dow, plus a two-line Big Picture and the top semiconductor and AI/Big Tech headlines picked and summarised by Groq's `openai/gpt-oss-120b`.
 
 Also supports on-demand Telegram commands via a Flask webhook hosted on PythonAnywhere, including a shared watchlist with live pre/post-market prices.
 

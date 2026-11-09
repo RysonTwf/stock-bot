@@ -107,6 +107,7 @@ LOW_VALUE_RE = re.compile(
     r"|\byour (capital|money|portfolio)\b"
     r"|\bthis is the\b|\bwith this\b|\bthis respected\b|\bact now\b"
     r"|\bstocks? that explain\b"
+    r"|\bbuy, sell,? or hold\b"
     r"|^\d+\s+(\w+\s+){0,4}(stocks?|reasons?|things|ways)\b"
     r"|\?\s*$",
     re.IGNORECASE,
@@ -290,11 +291,13 @@ SECTION — <b>🧭 Big Picture</b>
 SECTION — <b>🔬 Semis + AI Headlines</b>
 SELECTION RULES:
   • Only consider headlines that name a specific company.
-  • Pick the 5 MOST IMPORTANT for someone following semis and AI — real news (deals, earnings, products, guidance, regulation, analyst rating changes) over commentary.
+  • Pick the 5 MOST IMPORTANT for someone following semis and AI — real news (deals, earnings, products, guidance, regulation, legal action, analyst rating changes).
+  • SKIP opinion and commentary pieces (e.g. "X is a triple threat", "Wall Street may be underestimating X") and multi-company roundups.
   • Fewer than 5 is fine if the rest are weak. If none qualify, write: <i>No strong catalysts found today.</i>
 
 For each pick, write exactly one line using this EXACT format — no exceptions:
 📌 <b>Company (TICKER, MOVE):</b> [what happened] — [why it matters] [N]
+  - Company: the company's common name, e.g. Nvidia, Micron, TSMC — never the ticker.
   - TICKER: the stock ticker symbol, e.g. NVDA, MU, TSM
   - MOVE: find the ticker in PRICE DATA and copy its % exactly. If the ticker is not in PRICE DATA write N/A.
   - NEVER omit TICKER or MOVE. NEVER write "no move". Always write N/A if data is missing.
@@ -303,6 +306,8 @@ For each pick, write exactly one line using this EXACT format — no exceptions:
   - ACCURACY RULES (highest priority):
     • Do NOT invert buy/sell/upgrade/downgrade direction. Copy the action word from the headline exactly.
     • Do NOT add facts that are not in the headline. No speculation about reasons or amounts.
+    • The company MUST be named in that headline. Never attach a headline to a company it does not mention.
+    • Never infer a direction (upgraded/downgraded, beat/missed, rose/fell) unless the headline states it.
     • If a headline is ambiguous, restate it conservatively rather than interpreting it.
 
 SECTION — <b>👀 One Thing To Watch</b>
@@ -320,14 +325,19 @@ FORMATTING RULES:
 """
 
 
+# 120b over 20b: the 20b pinned stories on companies the headline never named
+# and guessed analyst-rating directions. Same free-tier limits on Groq.
+GROQ_MODEL = "openai/gpt-oss-120b"
+
+
 def call_groq(prompt: str, retries: int = 3) -> str:
     client = Groq(api_key=GROQ_API_KEY)
     for attempt in range(1, retries + 1):
         try:
             resp = client.chat.completions.create(
-                model="openai/gpt-oss-20b",
+                model=GROQ_MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
+                temperature=0.3,
                 max_tokens=1800,
                 reasoning_effort="low",
             )
@@ -407,7 +417,7 @@ def build_brief() -> str:
     for h in headlines:
         print(f"    - {h['title'][:80]}")
 
-    print("  Calling Groq (openai/gpt-oss-20b)...")
+    print(f"  Calling Groq ({GROQ_MODEL})...")
     prompt   = build_prompt(headlines, ticker_moves, market_data)
     llm_part = link_sources(enforce_annotations(call_groq(prompt), ticker_moves), headlines)
     big_picture, llm_rest = split_big_picture(llm_part)
