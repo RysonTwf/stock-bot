@@ -1,6 +1,6 @@
 # Daily Stock Market Brief Bot
 
-A Telegram bot that sends a market briefing every weekday at the US market open (14:30 UTC, 10:30 PM SGT; GitHub can start scheduled runs a few minutes late), covering S&P 500, Nasdaq, Dow, plus top semiconductor and AI/Big Tech headlines summarised by Groq's LLaMA 3.3 70B.
+A Telegram bot that sends a market briefing every weekday at the US market open (14:30 UTC, 10:30 PM SGT; GitHub can start scheduled runs a few minutes late), covering S&P 500, Nasdaq, Dow, plus a two-line Big Picture and the top semiconductor and AI/Big Tech headlines picked and summarised by Groq's `openai/gpt-oss-20b`.
 
 Also supports on-demand Telegram commands via a Flask webhook hosted on PythonAnywhere, including a shared watchlist with live pre/post-market prices.
 
@@ -30,6 +30,7 @@ The watchlist is shared by everyone in the group (single-group bot). It is store
 | `app.py` | Flask webhook server — handles `/brief` and watchlist commands from Telegram |
 | `watchlist.py` | Shared watchlist module — live quotes (pre/post market), validation, formatting |
 | `watchlist.json` | The shared watchlist itself (committed by the webhook via GitHub API) |
+| `tests/test_brief_format.py` | Standalone test (no pytest) for the headline filter, source links and Big Picture placement |
 | `tests/test_prev_close.py` | Standalone test (no pytest) for prev-close selection; run it directly for a live AMD/NVDA sanity check |
 | `requirements.txt` | Python dependencies |
 | `.github/workflows/daily_brief.yml` | GitHub Actions scheduler (Mon–Fri, 14:30 UTC) |
@@ -208,25 +209,36 @@ python bot.py
 ## What the Brief Looks Like
 
 ```
-📊 Market Pulse (pre-market, vs prev close)
-S&P 500: $5,432.10 ▲ +0.84%
-Nasdaq:  $17,891.50 ▲ +1.12%
-Dow:     $39,215.30 ▼ -0.21%
+US market: regular hours · all moves vs prev close
 
-⭐ Watchlist (pre-market, vs prev close)
-▲ NVDA: 200.21 (+2.10%)
-▼ TSLA: 384.77 (-0.83%)
+🧭 Big Picture
+Chip stocks are split as Nvidia's governance scare weighs on the leader while
+memory and equipment names rally. AI spending headlines keep tech bid overall.
 
-🔬 Semis + AI Headlines (pre-market, vs prev close)
-1. Nvidia's Blackwell GPU demand outstrips supply into Q3
-2. TSMC raises 2025 revenue forecast on AI chip orders
+📊 Market Pulse
+▲ S&P 500: 7,376.86 (+0.31%)
+▲ Nasdaq: 24,579.42 (+1.09%)
+▼ Dow: 51,285.73 (-0.46%)
+SMH ▼ -0.12% | XLK ▲ +0.08%
+VIX: 23.5 (-8.2%) — moderate
+
+📈 Movers
+▲ AMD +3.9% | ASML +3.3% | AMZN +2.9%
+▼ NVDA -5.1% | SMCI -2.4% | NXPI -0.7%
+
+⭐ Watchlist
+▼ NVDA: 177.05 (-5.14%)
+▲ AMD: 466.63 (+3.92%)
+
+🔬 Semis + AI Headlines
+📌 Nvidia (NVDA, -5.1%): Board opens probe into CEO spying case — governance risk hits the AI leader ↗
 ...
 
-👀 One Thing To Watch (pre-market, vs prev close)
-Nvidia supply constraints are the dominant story today...
+👀 One Thing To Watch
+...
 ```
 
-Every section header carries the same `(session, vs prev close)` label — pre-market, regular hours, after-hours, or market closed — and all sections share one live quote source, so the numbers are directly comparable. Cash indices don't trade pre-market, so until the open Market Pulse shows the last close and its move.
+The session (pre-market, regular hours, after-hours or market closed) is stated once at the top, and every section uses the same live quote source, so the numbers are directly comparable. Each headline ends with a ↗ link to its article. Before the AI sees the headlines, the bot drops listicles, buy/sell advice, teaser titles and Motley Fool syndication (`is_low_value_headline()` in `bot.py`); the AI then picks the 5 most important. The AI never supplies numbers: price moves and links are filled in by the bot.
 
 ---
 

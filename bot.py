@@ -39,8 +39,6 @@ MOVERS_UNIVERSE = [
     "SMCI", "HPE",  "DELL", "CDNS", "SNPS", "MCHP", "ADI",  "NXPI", "ON",   "STM",
 ]
 
-REDDIT_SUBS = ["wallstreetbets", "stocks", "investing"]
-
 RSS_FEEDS = [
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,AMD,MU,MRVL,INTC,AMAT&region=US&lang=en-US",
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL,MSFT,GOOGL,META,AMZN,TSLA,ORCL,ARM,AVGO,QCOM&region=US&lang=en-US",
@@ -96,80 +94,35 @@ def get_universe_moves() -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
-# Reddit posts (via PRAW — official API, not blocked by Reddit)
-# ---------------------------------------------------------------------------
-def get_reddit_posts(top_n: int = 5) -> list[dict]:
-    """Fetch hot posts from finance subreddits via PRAW (Reddit official API).
-
-    Requires REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET env vars (read-only
-    script app registered at reddit.com/prefs/apps). Silently returns [] if
-    credentials are absent so the section is just skipped in dev without them.
-    """
-    import praw  # optional dependency — only imported when credentials exist
-
-    client_id     = os.environ.get("REDDIT_CLIENT_ID", "")
-    client_secret = os.environ.get("REDDIT_CLIENT_SECRET", "")
-    if not client_id or not client_secret:
-        print("  [warn] Reddit: REDDIT_CLIENT_ID/SECRET not set — skipping", file=sys.stderr)
-        return []
-
-    reddit = praw.Reddit(
-        client_id=client_id,
-        client_secret=client_secret,
-        user_agent="stockbot/1.0 by RysonTwf",
-    )
-
-    posts: list[dict] = []
-    for sub in REDDIT_SUBS:
-        try:
-            for post in reddit.subreddit(sub).hot(limit=25):
-                if post.stickied:
-                    continue
-                posts.append({
-                    "title": post.title.strip(),
-                    "url":   f"https://reddit.com{post.permalink}",
-                    "score": post.score,
-                    "sub":   sub,
-                })
-        except Exception as e:
-            print(f"  [warn] Reddit r/{sub}: {e}", file=sys.stderr)
-
-    def _words(title: str) -> set[str]:
-        return set(re.findall(r"[a-z]{3,}", title.lower()))
-
-    kept_words: list[set[str]] = []
-    relevant: list[dict] = []
-    fallback: list[dict] = []
-
-    for p in sorted(posts, key=lambda x: x["score"], reverse=True):
-        title_lower = " " + p["title"].lower() + " "
-        if "cramer" in title_lower:
-            continue  # Jim Cramer opinion/hype pieces, not real catalysts
-        words = _words(p["title"])
-        if words and any(len(words & kw) / len(words | kw) > 0.6 for kw in kept_words):
-            continue
-        kept_words.append(words)
-        if any(kw in title_lower for kw in SEMI_AI_KEYWORDS):
-            relevant.append(p)
-        else:
-            fallback.append(p)
-
-    return (relevant + fallback)[:top_n]
-
-
-def build_reddit_section(posts: list[dict]) -> str:
-    if not posts:
-        return ""
-    lines = ["<b>📰 Reddit Buzz</b> <i>(wsb · stocks · investing)</i>"]
-    for p in posts:
-        title = html.escape(p["title"])
-        lines.append(f'• <a href="{p["url"]}">{title}</a> <i>(r/{p["sub"]}, ↑{p["score"]:,})</i>')
-    return "\n".join(lines)
-
-
-# ---------------------------------------------------------------------------
 # RSS headlines
 # ---------------------------------------------------------------------------
+# Listicles, buy/sell advice and opinion questions (mostly Motley Fool-style
+# syndication on the Yahoo feeds) crowd out actual news.
+LOW_VALUE_RE = re.compile(
+    r"\bstocks? to (buy|sell|own|hold|watch)\b"
+    r"|\bprice prediction\b"
+    r"|\bshould you\b"
+    r"|\bis it too late\b"
+    r"|\bunstoppable\b"
+    r"|\byour (capital|money|portfolio)\b"
+    r"|\bthis is the\b|\bwith this\b|\bthis respected\b|\bact now\b"
+    r"|\bstocks? that explain\b"
+    r"|^\d+\s+(\w+\s+){0,4}(stocks?|reasons?|things|ways)\b"
+    r"|\?\s*$",
+    re.IGNORECASE,
+)
+
+
+LOW_VALUE_SOURCES = ("fool.com",)  # syndicated opinion and teaser headlines
+
+
+def is_low_value_headline(title: str, link: str = "") -> bool:
+    return (
+        "cramer" in title.lower()
+        or any(src in link for src in LOW_VALUE_SOURCES)
+        or bool(LOW_VALUE_RE.search(title))
+    )
+
 def get_headlines(max_per_feed: int = 30, top_n: int = 20) -> list[dict]:
     all_headlines: list[dict] = []
     for url in RSS_FEEDS:
@@ -192,8 +145,8 @@ def get_headlines(max_per_feed: int = 30, top_n: int = 20) -> list[dict]:
 
     for h in all_headlines:
         title_lower = " " + h["title"].lower() + " "
-        if "cramer" in title_lower:
-            continue  # Jim Cramer opinion/hype pieces, not real catalysts
+        if is_low_value_headline(h["title"], h["link"]):
+            continue
         words = _words(h["title"])
         # Skip near-duplicates: same story rewritten by another outlet
         if words and any(
@@ -227,7 +180,7 @@ def _arrow(pct: float) -> str:
 
 def build_market_sections(market_data: dict, ticker_moves: dict[str, float]) -> str:
     """Render Sections 1–2 in Python so every number is exactly what we fetched."""
-    lines = [f"<b>📊 Market Pulse</b> <i>({market_session()}, vs prev close)</i>"]
+    lines = ["<b>📊 Market Pulse</b>"]
     for name in INDICES:
         d = market_data.get(name)
         if d:
@@ -246,7 +199,7 @@ def build_market_sections(market_data: dict, ticker_moves: dict[str, float]) -> 
         lines.append(f"VIX: {vix['price']:.1f} ({vix['change_pct']:+.1f}%) — {_vix_mood(vix['price'])}")
 
     lines.append("")
-    lines.append(f"<b>📈 Movers</b> <i>({market_session()}, vs prev close)</i>")
+    lines.append("<b>📈 Movers</b>")
     sorted_moves = sorted(ticker_moves.items(), key=lambda x: x[1])
     gainers = [(t, p) for t, p in reversed(sorted_moves) if p > 0][:3]
     losers  = [(t, p) for t, p in sorted_moves if p < 0][:3]
@@ -275,16 +228,37 @@ def enforce_annotations(text: str, ticker_moves: dict[str, float]) -> str:
     return ANNOTATION_RE.sub(fix, text)
 
 
-def label_llm_sections(text: str) -> str:
-    """Append the session label to the LLM-written section headers in Python,
-    so it's always present and exact rather than trusting the LLM to copy it."""
-    label = f" <i>({market_session()}, vs prev close)</i>"
-    for header in ("<b>🔬 Semis + AI Headlines</b>", "<b>👀 One Thing To Watch</b>"):
-        text = text.replace(header, header + label, 1)
-    return text
+SOURCE_REF_RE = re.compile(r"\s*\[(\d+)\]")
 
 
-def build_prompt(headlines: list[dict], ticker_moves: dict[str, float]) -> str:
+def link_sources(text: str, headlines: list[dict]) -> str:
+    """Turn the LLM's [n] headline references into tappable links to the article.
+
+    Links are filled in from the fetched feed in Python, never written by the LLM.
+    """
+    def fix(m: re.Match) -> str:
+        i = int(m.group(1)) - 1
+        link = headlines[i]["link"] if 0 <= i < len(headlines) else ""
+        return f' <a href="{html.escape(link, quote=True)}">↗</a>' if link else ""
+    return SOURCE_REF_RE.sub(fix, text)
+
+
+BIG_PICTURE_HEADER = "<b>🧭 Big Picture</b>"
+HEADLINES_HEADER   = "<b>🔬 Semis + AI Headlines</b>"
+
+
+def split_big_picture(text: str) -> tuple[str, str]:
+    """Split the LLM output into (Big Picture, rest) so the summary can lead the brief."""
+    if not text.startswith(BIG_PICTURE_HEADER) or HEADLINES_HEADER not in text:
+        return "", text
+    big, rest = text.split(HEADLINES_HEADER, 1)
+    return big.strip(), HEADLINES_HEADER + rest
+
+
+def build_prompt(headlines: list[dict], ticker_moves: dict[str, float], market_data: dict) -> str:
+    market_ctx = " | ".join(
+        f"{name} {d['change_pct']:+.1f}%" for name, d in market_data.items()
+    )
     price_ctx = " | ".join(
         f"{t} {p:+.1f}%"
         for t, p in sorted(ticker_moves.items())
@@ -295,8 +269,11 @@ def build_prompt(headlines: list[dict], ticker_moves: dict[str, float]) -> str:
     )
     today = datetime.now(timezone.utc).strftime("%A, %B %d %Y")
 
-    return f"""You are a sharp financial analyst writing the headlines portion of a premarket brief for {today}.
-Output a Telegram HTML message — no preamble, no market summary, start directly with the headlines section.
+    return f"""You are a sharp financial analyst writing part of a market-open brief for {today}.
+Output a Telegram HTML message — no preamble, start directly with the Big Picture section.
+
+MARKET DATA (live % vs prev close — context only):
+{market_ctx}
 
 PRICE DATA (live % vs prev close — use to annotate headlines, do not list separately):
 {price_ctx}
@@ -306,18 +283,22 @@ RAW HEADLINES (may include noise — you must filter):
 
 ---
 
-SECTION — <b>🔬 Semis + AI Headlines</b>
-STRICT FILTERING RULES:
-  • INCLUDE a headline if it names a specific company.
-  • REJECT only headlines that name NO specific company at all.
-  • Include every headline that passes, up to 10.
-  • If ZERO pass, write: <i>No strong catalysts found today.</i>
+SECTION — <b>🧭 Big Picture</b>
+- Exactly 2 sentences on what is driving tech and chip stocks today, using MARKET DATA and the headlines.
+- Do NOT write any numbers or percentages here — the brief shows the exact figures elsewhere.
 
-For each headline that passes, write exactly one line using this EXACT format — no exceptions:
-📌 <b>Company (TICKER, MOVE):</b> [what happened] — [why it matters]
+SECTION — <b>🔬 Semis + AI Headlines</b>
+SELECTION RULES:
+  • Only consider headlines that name a specific company.
+  • Pick the 5 MOST IMPORTANT for someone following semis and AI — real news (deals, earnings, products, guidance, regulation, analyst rating changes) over commentary.
+  • Fewer than 5 is fine if the rest are weak. If none qualify, write: <i>No strong catalysts found today.</i>
+
+For each pick, write exactly one line using this EXACT format — no exceptions:
+📌 <b>Company (TICKER, MOVE):</b> [what happened] — [why it matters] [N]
   - TICKER: the stock ticker symbol, e.g. NVDA, MU, TSM
   - MOVE: find the ticker in PRICE DATA and copy its % exactly. If the ticker is not in PRICE DATA write N/A.
   - NEVER omit TICKER or MOVE. NEVER write "no move". Always write N/A if data is missing.
+  - N: the number of the headline in RAW HEADLINES, in square brackets, e.g. [3]. Always include it.
   - Keep the explanation after the dash under 20 words.
   - ACCURACY RULES (highest priority):
     • Do NOT invert buy/sell/upgrade/downgrade direction. Copy the action word from the headline exactly.
@@ -327,7 +308,7 @@ For each headline that passes, write exactly one line using this EXACT format �
 SECTION — <b>👀 One Thing To Watch</b>
 - Pick the single highest-conviction catalyst from the headlines section.
 - Name the company and ticker with its move in the same (TICKER, MOVE) format, and say why it matters TODAY using only facts from the headline.
-- If there were no catalysts: <i>No single standout catalyst today — wait for the open.</i>
+- If there were no catalysts: <i>No single standout catalyst today.</i>
 - Max 3 sentences.
 
 ---
@@ -396,7 +377,7 @@ def send_telegram(message: str, chat_id: str | None = None) -> dict:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def main() -> None:
+def build_brief() -> str:
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[{ts}] Starting daily brief...")
 
@@ -416,16 +397,10 @@ def main() -> None:
     watchlist_section = ""
     if user_watchlist:
         quotes = get_live_quotes(user_watchlist)
-        watchlist_section = format_watchlist(user_watchlist, quotes) + "\n\n"
+        watchlist_section = format_watchlist(user_watchlist, quotes, show_session=False) + "\n\n"
         for t in user_watchlist:
             q = quotes.get(t)
             print(f"    {t}: {q['price']:,.2f} ({q['change_pct']:+.2f}%)" if q else f"    {t}: no data")
-
-    print("  Fetching Reddit posts...")
-    reddit_posts = get_reddit_posts()
-    reddit_section = build_reddit_section(reddit_posts) + "\n\n" if reddit_posts else ""
-    for p in reddit_posts:
-        print(f"    r/{p['sub']}: {p['title'][:80]}")
 
     print("  Fetching RSS headlines...")
     headlines = get_headlines()
@@ -433,13 +408,27 @@ def main() -> None:
         print(f"    - {h['title'][:80]}")
 
     print("  Calling Groq (openai/gpt-oss-20b)...")
-    prompt   = build_prompt(headlines, ticker_moves)
-    llm_part = label_llm_sections(enforce_annotations(call_groq(prompt), ticker_moves))
+    prompt   = build_prompt(headlines, ticker_moves, market_data)
+    llm_part = link_sources(enforce_annotations(call_groq(prompt), ticker_moves), headlines)
+    big_picture, llm_rest = split_big_picture(llm_part)
 
-    # Sections 1–3 are rendered in Python so the numbers can't be garbled
-    brief = build_market_sections(market_data, ticker_moves) + "\n\n" + watchlist_section + reddit_section + llm_part
+    # Market, movers and watchlist are rendered in Python so the numbers can't be garbled
+    session_line = f"<i>US market: {market_session()} · all moves vs prev close</i>"
+    brief = "\n\n".join(
+        part for part in (
+            session_line,
+            big_picture,
+            build_market_sections(market_data, ticker_moves),
+            watchlist_section.strip(),
+            llm_rest,
+        ) if part
+    )
     print(f"  Brief length: {len(brief)} chars")
+    return brief
 
+
+def main() -> None:
+    brief = build_brief()
     print("  Sending to Telegram...")
     result = send_telegram(brief)
     msg_id = result.get("result", {}).get("message_id", "?")

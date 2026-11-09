@@ -237,12 +237,17 @@ def get_live_quotes(tickers: list[str]) -> dict[str, dict]:
     return quotes
 
 
-def format_watchlist(tickers: list[str], quotes: dict[str, dict]) -> str:
-    """Render the watchlist as Telegram HTML. Numbers come straight from yfinance."""
+def format_watchlist(tickers: list[str], quotes: dict[str, dict], show_session: bool = True) -> str:
+    """Render the watchlist as Telegram HTML. Numbers come straight from yfinance.
+
+    show_session=False drops the header's session label, for the daily brief,
+    which states the session once at the top.
+    """
     if not tickers:
         return ("<b>⭐ Watchlist</b>\n<i>Empty — add stocks with /watch TICKER "
                 "(e.g. /watch NVDA TSLA)</i>")
-    lines = [f"<b>⭐ Watchlist</b> <i>({market_session()}, vs prev close)</i>"]
+    label = f" <i>({market_session()}, vs prev close)</i>" if show_session else ""
+    lines = [f"<b>⭐ Watchlist</b>{label}"]
     for t in tickers:
         q = quotes.get(t)
         if not q:
