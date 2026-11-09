@@ -91,6 +91,13 @@ def test_split_big_picture():
     assert big == "" and rest == "<b>🔬 Semis + AI Headlines</b>\n📌 line"
 
 
+def test_br_tags_become_newlines():
+    # gpt-oss-120b emits <br>; Telegram's HTML mode rejects it and the brief
+    # degraded to plain text (no bold, no links) on 2026-11-09
+    out = bot.clean_llm_html("<b>🧭 Big Picture</b><br>One.<br/>Two.<BR />Three.")
+    assert out == "<b>🧭 Big Picture</b>\nOne.\nTwo.\nThree.", out
+
+
 def test_market_sections_have_no_per_header_session_label():
     data = {"S&P 500": {"price": 6000.0, "change_pct": 0.5}}
     out = bot.build_market_sections(data, {"NVDA": 1.2, "AMD": -0.4})

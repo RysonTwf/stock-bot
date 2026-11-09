@@ -229,6 +229,14 @@ def enforce_annotations(text: str, ticker_moves: dict[str, float]) -> str:
     return ANNOTATION_RE.sub(fix, text)
 
 
+BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+
+
+def clean_llm_html(text: str) -> str:
+    """Replace <br> with newlines: Telegram's HTML mode rejects the tag outright."""
+    return BR_RE.sub("\n", text)
+
+
 SOURCE_REF_RE = re.compile(r"\s*\[(\d+)\]")
 
 
@@ -319,7 +327,7 @@ SECTION — <b>👀 One Thing To Watch</b>
 ---
 
 FORMATTING RULES:
-- Telegram HTML only: <b>bold</b>, <i>italic</i> — NO asterisks, NO markdown
+- Telegram HTML only: <b>bold</b>, <i>italic</i> — NO asterisks, NO markdown, NO <br> (use plain line breaks)
 - Tone: direct, like a friend who trades
 - Total output under 2500 characters
 """
@@ -419,7 +427,7 @@ def build_brief() -> str:
 
     print(f"  Calling Groq ({GROQ_MODEL})...")
     prompt   = build_prompt(headlines, ticker_moves, market_data)
-    llm_part = link_sources(enforce_annotations(call_groq(prompt), ticker_moves), headlines)
+    llm_part = link_sources(enforce_annotations(clean_llm_html(call_groq(prompt)), ticker_moves), headlines)
     big_picture, llm_rest = split_big_picture(llm_part)
 
     # Market, movers and watchlist are rendered in Python so the numbers can't be garbled
