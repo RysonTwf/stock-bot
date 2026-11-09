@@ -132,18 +132,20 @@ def test_sections_share_one_quote_snapshot():
 
 
 def test_cap_per_company():
-    # 2026-11-09: Nvidia took 3 of 5 headline slots
+    # 2026-11-09: Nvidia took 3 of 5 headline slots, then Alphabet's AI-chip
+    # story appeared twice from two outlets; every repeat was the same story
     text = ("<b>🔬 Semis + AI Headlines</b>\n"
             "📌 <b>Nvidia (NVDA, -5.0%):</b> probe [1]\n"
             "📌 <b>Google (GOOGL, +3.0%):</b> chips [2]\n"
             "📌 <b>Nvidia (NVDA, -5.0%):</b> China focus [3]\n"
             "📌 <b>Nvidia (NVDA, -5.0%):</b> ETF rethink [4]\n"
             "📌 <b>TSMC (TSM, +1.9%):</b> Asia rally [5]")
-    out = bot.cap_per_company(text, limit=2)
-    assert "ETF rethink" not in out, out
-    for kept in ("probe", "chips", "China focus", "Asia rally"):
+    out = bot.cap_per_company(text)
+    for dropped in ("China focus", "ETF rethink"):
+        assert dropped not in out, out
+    for kept in ("probe", "chips", "Asia rally"):
         assert kept in out, out
-    assert out.count("📌") == 4, out
+    assert out.count("📌") == 3, out
 
 
 def test_flat_move_has_no_arrow():

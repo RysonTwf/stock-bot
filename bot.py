@@ -276,8 +276,12 @@ def link_sources(text: str, headlines: list[dict]) -> str:
 HEADLINE_TICKER_RE = re.compile(r"^📌 <b>[^(]*\(([A-Z.]{1,6}),")
 
 
-def cap_per_company(text: str, limit: int = 2) -> str:
-    """Keep at most `limit` headline lines per ticker so one story can't fill the list."""
+def cap_per_company(text: str, limit: int = 1) -> str:
+    """Keep at most `limit` headline lines per ticker so one story can't fill the list.
+
+    The LLM ignores "one line per story" when outlets word the same story
+    differently, and every repeat seen so far was the same story.
+    """
     seen: dict[str, int] = {}
     kept: list[str] = []
     for line in text.split("\n"):
@@ -342,7 +346,7 @@ RAW HEADLINES (may include noise — you must filter):
 SECTION — <b>🧭 Big Picture</b>
 - Exactly 2 sentences on WHY tech and chip stocks are moving today, using the headlines. Do not narrate the index or VIX moves themselves — the brief shows them right below.
 - Every claim must come from a headline or MARKET DATA. Do NOT mention earnings, demand, fund flows, guidance or anything else no headline states. If you cannot point to the headline a claim comes from, leave the claim out.
-- Any direction you give for a sector must match MARKET DATA: the chip sector is SMH, tech is XLK. If one stock falls while its sector rises, say so.
+- Do NOT say whether the market, the chip sector or tech is up, down or flat — the exact figures sit right below. Say what is happening and why.
 - Do NOT write any numbers or percentages here — the brief shows the exact figures elsewhere.
 
 SECTION — <b>🔬 Semis + AI Headlines</b>
@@ -350,7 +354,7 @@ SELECTION RULES:
   • Only consider headlines that name a specific company.
   • Pick 5 — the MOST IMPORTANT for someone following semis and AI — real news (deals, earnings, products, guidance, regulation, legal action, analyst rating changes).
   • SKIP opinion and commentary pieces (e.g. "X is a triple threat", "Wall Street may be underestimating X") and multi-company roundups.
-  • At most 2 lines per company.
+  • At most 1 line per company.
   • ONE line per story. If several headlines report the same event (e.g. the same probe, deal or earnings), use only the most informative one.
   • Routine items rank LAST: buyback filings, earnings-date announcements, awards, executive hires and marketing press releases. Use them only if nothing better is left.
   • Only go below 5 if fewer than 5 headlines qualify under these rules. Deals, product launches and analyst calls on named companies all qualify. If none qualify, write: <i>No strong catalysts found today.</i>
