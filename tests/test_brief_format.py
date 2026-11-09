@@ -36,6 +36,12 @@ LOW_VALUE = [
     "NXP Semiconductors (NXPI): Net ETF Buying of $10.4 Million Recorded on Nov. 5",
     "Notable ETF Outflow Detected - SMH, NVDA, AVGO",
     "Google makes a $300 move Pixel buyers should know",
+    # Routine corporate items and press-release titles (2026-11-09 feed)
+    "ASML reports transactions under its current share buyback program",
+    "Broadcom Inc. to Announce Fourth Quarter and Fiscal Year 2026 Financial Results on Thursday, December 9, 2026",
+    "Netwrix Appoints Former Google Executive Tony Orlando as Chief Revenue Officer",
+    "Google Wins the AFP 2026 Pinnacle Awards",
+    "AMD EPYC Expands Its Leadership at the Foundation of AI",
     "What Nvidia investors need to know about the probe",
 ]
 
@@ -52,6 +58,9 @@ REAL_NEWS = [
     "Tech stocks claw back some losses despite Nvidia concerns",
     "Markets Rally as Nvidia Fears Subside and Rotation Gathers Pace",
     "Vanguard ETFs see record inflows as investors pile into tech",
+    "CoreWeave to Power Wayve's AI Driver Training in Multi-Year Agreement",
+    "Nvidia reports record third-quarter revenue",
+    "Intel wins $3 billion Pentagon chip contract",
 ]
 
 
@@ -143,6 +152,14 @@ def test_flat_move_has_no_arrow():
     assert bot._arrow(0.01) == "▲" and bot._arrow(-0.01) == "▼"
     out = bot.format_watchlist(["SMR"], {"SMR": {"price": 5.08, "change_pct": 0.001, "stale": False}})
     assert "• SMR: 5.08 (+0.00%)" in out, out
+
+
+def test_unknown_ticker_and_move_brackets_dropped():
+    # LLM didn't know CoreWeave's ticker: "CoreWeave (N/A, N/A):" (2026-11-09)
+    out = bot.tidy_unknown_tickers("📌 <b>CoreWeave (N/A, N/A):</b> deal [7]")
+    assert out == "📌 <b>CoreWeave:</b> deal [7]", out
+    out = bot.tidy_unknown_tickers("📌 <b>CoreWeave (CRWV, N/A):</b> deal [7]")
+    assert out == "📌 <b>CoreWeave (CRWV, N/A):</b> deal [7]", out
 
 
 def test_market_sections_have_no_per_header_session_label():

@@ -117,6 +117,10 @@ LOW_VALUE_RE = re.compile(
     r"|^\d+ ETFs (add|cut|trim|boost)\b"
     r"|\bnet ETF (buying|selling)\b|\bnotable ETF (inflow|outflow)\b"
     r"|\b(should|need to) know\b"
+    # Routine corporate items and press-release titles: the LLM kept ranking
+    # them above real stories despite being told not to
+    r"|\btransactions under\b|\bto announce\b.*\bresults\b|\bappoints former\b"
+    r"|\bwins\b.*\bawards?\b|\b(expands|extends|reinforces) its leadership\b"
     r"|^\d+\s+(\w+\s+){0,4}(stocks?|reasons?|things|ways)\b"
     r"|\?\s*$",
     re.IGNORECASE,
@@ -236,6 +240,14 @@ def enforce_annotations(text: str, ticker_moves: dict[str, float]) -> str:
             return f"({t}, {ticker_moves[t]:+.1f}%)"
         return f"({t}, N/A)"
     return ANNOTATION_RE.sub(fix, text)
+
+
+UNKNOWN_TICKER_RE = re.compile(r"\s*\(N/A,\s*N/A\)")
+
+
+def tidy_unknown_tickers(text: str) -> str:
+    """"CoreWeave (N/A, N/A):" -> "CoreWeave:" when the LLM knew neither ticker nor move."""
+    return UNKNOWN_TICKER_RE.sub("", text)
 
 
 BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
@@ -468,7 +480,7 @@ def build_brief() -> str:
     raw = call_groq(prompt)
     # Logged so a thin brief can be traced to the LLM or to the post-processing
     print("  LLM output:\n" + "\n".join(f"    | {line}" for line in raw.splitlines()))
-    llm_part = enforce_annotations(clean_llm_html(raw), ticker_moves)
+    llm_part = tidy_unknown_tickers(enforce_annotations(clean_llm_html(raw), ticker_moves))
     llm_part = link_sources(cap_per_company(llm_part), headlines)
     big_picture, llm_rest = split_big_picture(llm_part)
 
