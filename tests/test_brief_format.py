@@ -33,6 +33,8 @@ LOW_VALUE = [
     # Auto-generated fund-holdings filler
     "14 ETFs Add to ASML (ASML) Holdings on Nov. 5",
     "11 ETFs Add to Taiwan Semiconductor (TSM) on Thursday",
+    "Google makes a $300 move Pixel buyers should know",
+    "What Nvidia investors need to know about the probe",
 ]
 
 REAL_NEWS = [

@@ -115,6 +115,7 @@ LOW_VALUE_RE = re.compile(
     r"|\bstocks? that explain\b"
     r"|\bbuy, sell,? or hold\b"
     r"|^\d+ ETFs (add|cut|trim|boost)\b"
+    r"|\b(should|need to) know\b"
     r"|^\d+\s+(\w+\s+){0,4}(stocks?|reasons?|things|ways)\b"
     r"|\?\s*$",
     re.IGNORECASE,
@@ -326,6 +327,7 @@ or, ONLY when the headline itself states a reason or consequence:
     • Do NOT invert buy/sell/upgrade/downgrade direction. Copy the action word from the headline exactly.
     • Do NOT add facts that are not in the headline. No speculation about reasons or amounts.
     • The company MUST be named in that headline. Never attach a headline to a company it does not mention.
+    • Watch for different companies with similar names (e.g. "Meta Critical Minerals" is NOT Meta Platforms). Only use a ticker from PRICE DATA when the headline is clearly about that listed company; otherwise skip the headline.
     • Never infer a direction (upgraded/downgraded, beat/missed, rose/fell) unless the headline states it.
     • An analysis or opinion headline about a company is NOT an announcement by that company. Never write "announces", "reports" or "launches" unless the headline says the company did it.
     • If a headline is ambiguous, restate it conservatively rather than interpreting it.
