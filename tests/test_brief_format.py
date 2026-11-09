@@ -120,6 +120,21 @@ def test_sections_share_one_quote_snapshot():
     assert market == {"S&P 500": quotes["^GSPC"]}, market
 
 
+def test_cap_per_company():
+    # 2026-11-09: Nvidia took 3 of 5 headline slots
+    text = ("<b>🔬 Semis + AI Headlines</b>\n"
+            "📌 <b>Nvidia (NVDA, -5.0%):</b> probe [1]\n"
+            "📌 <b>Google (GOOGL, +3.0%):</b> chips [2]\n"
+            "📌 <b>Nvidia (NVDA, -5.0%):</b> China focus [3]\n"
+            "📌 <b>Nvidia (NVDA, -5.0%):</b> ETF rethink [4]\n"
+            "📌 <b>TSMC (TSM, +1.9%):</b> Asia rally [5]")
+    out = bot.cap_per_company(text, limit=2)
+    assert "ETF rethink" not in out, out
+    for kept in ("probe", "chips", "China focus", "Asia rally"):
+        assert kept in out, out
+    assert out.count("📌") == 4, out
+
+
 def test_market_sections_have_no_per_header_session_label():
     data = {"S&P 500": {"price": 6000.0, "change_pct": 0.5}}
     out = bot.build_market_sections(data, {"NVDA": 1.2, "AMD": -0.4})

@@ -260,6 +260,23 @@ def link_sources(text: str, headlines: list[dict]) -> str:
     return SOURCE_REF_RE.sub(fix, text)
 
 
+HEADLINE_TICKER_RE = re.compile(r"^📌 <b>[^(]*\(([A-Z.]{1,6}),")
+
+
+def cap_per_company(text: str, limit: int = 2) -> str:
+    """Keep at most `limit` headline lines per ticker so one story can't fill the list."""
+    seen: dict[str, int] = {}
+    kept: list[str] = []
+    for line in text.split("\n"):
+        m = HEADLINE_TICKER_RE.match(line)
+        if m:
+            seen[m.group(1)] = seen.get(m.group(1), 0) + 1
+            if seen[m.group(1)] > limit:
+                continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 BIG_PICTURE_HEADER = "<b>🧭 Big Picture</b>"
 HEADLINES_HEADER   = "<b>🔬 Semis + AI Headlines</b>"
 
@@ -272,9 +289,18 @@ def split_big_picture(text: str) -> tuple[str, str]:
     return big.strip(), HEADLINES_HEADER + rest
 
 
+# Spelled out for the LLM: given a bare "SMH +0.5%" it called the chip sector
+# lower on a day only Nvidia fell
+MARKET_LABELS = {
+    "SMH": "SMH (chip-sector ETF)",
+    "XLK": "XLK (tech-sector ETF)",
+    "VIX": "VIX (volatility index)",
+}
+
+
 def build_prompt(headlines: list[dict], ticker_moves: dict[str, float], market_data: dict) -> str:
     market_ctx = " | ".join(
-        f"{name} {d['change_pct']:+.1f}%" for name, d in market_data.items()
+        f"{MARKET_LABELS.get(name, name)} {d['change_pct']:+.1f}%" for name, d in market_data.items()
     )
     price_ctx = " | ".join(
         f"{t} {p:+.1f}%"
@@ -303,6 +329,7 @@ RAW HEADLINES (may include noise — you must filter):
 SECTION — <b>🧭 Big Picture</b>
 - Exactly 2 sentences on WHY tech and chip stocks are moving today, using the headlines. Do not narrate the index or VIX moves themselves — the brief shows them right below.
 - Every claim must come from a headline or MARKET DATA. Do NOT mention earnings, fund flows, guidance or anything else no headline states.
+- Any direction you give for a sector must match MARKET DATA: the chip sector is SMH, tech is XLK. If one stock falls while its sector rises, say so.
 - Do NOT write any numbers or percentages here — the brief shows the exact figures elsewhere.
 
 SECTION — <b>🔬 Semis + AI Headlines</b>
@@ -310,6 +337,7 @@ SELECTION RULES:
   • Only consider headlines that name a specific company.
   • Pick the 5 MOST IMPORTANT for someone following semis and AI — real news (deals, earnings, products, guidance, regulation, legal action, analyst rating changes).
   • SKIP opinion and commentary pieces (e.g. "X is a triple threat", "Wall Street may be underestimating X") and multi-company roundups.
+  • At most 2 lines per company.
   • ONE line per story. If several headlines report the same event (e.g. the same probe, deal or earnings), use only the most informative one.
   • Fewer than 5 is fine if the rest are weak. If none qualify, write: <i>No strong catalysts found today.</i>
 
@@ -434,7 +462,8 @@ def build_brief() -> str:
 
     print(f"  Calling Groq ({GROQ_MODEL})...")
     prompt   = build_prompt(headlines, ticker_moves, market_data)
-    llm_part = link_sources(enforce_annotations(clean_llm_html(call_groq(prompt)), ticker_moves), headlines)
+    llm_part = enforce_annotations(clean_llm_html(call_groq(prompt)), ticker_moves)
+    llm_part = link_sources(cap_per_company(llm_part), headlines)
     big_picture, llm_rest = split_big_picture(llm_part)
 
     # Market, movers and watchlist are rendered in Python so the numbers can't be garbled
