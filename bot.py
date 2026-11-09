@@ -329,7 +329,7 @@ RAW HEADLINES (may include noise — you must filter):
 
 SECTION — <b>🧭 Big Picture</b>
 - Exactly 2 sentences on WHY tech and chip stocks are moving today, using the headlines. Do not narrate the index or VIX moves themselves — the brief shows them right below.
-- Every claim must come from a headline or MARKET DATA. Do NOT mention earnings, fund flows, guidance or anything else no headline states.
+- Every claim must come from a headline or MARKET DATA. Do NOT mention earnings, demand, fund flows, guidance or anything else no headline states. If you cannot point to the headline a claim comes from, leave the claim out.
 - Any direction you give for a sector must match MARKET DATA: the chip sector is SMH, tech is XLK. If one stock falls while its sector rises, say so.
 - Do NOT write any numbers or percentages here — the brief shows the exact figures elsewhere.
 
@@ -340,6 +340,7 @@ SELECTION RULES:
   • SKIP opinion and commentary pieces (e.g. "X is a triple threat", "Wall Street may be underestimating X") and multi-company roundups.
   • At most 2 lines per company.
   • ONE line per story. If several headlines report the same event (e.g. the same probe, deal or earnings), use only the most informative one.
+  • Routine items rank LAST: buyback filings, earnings-date announcements, awards, executive hires and marketing press releases. Use them only if nothing better is left.
   • Only go below 5 if fewer than 5 headlines qualify under these rules. Deals, product launches and analyst calls on named companies all qualify. If none qualify, write: <i>No strong catalysts found today.</i>
 
 For each pick, write exactly one line using this EXACT format — no exceptions:
@@ -356,7 +357,8 @@ or, ONLY when the headline itself states a reason or consequence:
     • Do NOT invert buy/sell/upgrade/downgrade direction. Copy the action word from the headline exactly.
     • Do NOT add facts that are not in the headline. No speculation about reasons or amounts.
     • The company MUST be named in that headline. Never attach a headline to a company it does not mention.
-    • Watch for different companies with similar names (e.g. "Meta Critical Minerals" is NOT Meta Platforms). Only use a ticker from PRICE DATA when the headline is clearly about that listed company; otherwise skip the headline.
+    • Watch for different companies with similar names (e.g. "Meta Critical Minerals" is NOT Meta Platforms) — skip those headlines rather than use the wrong ticker.
+    • A real company that is NOT in PRICE DATA (e.g. CoreWeave) still qualifies: give its ticker if you know it and write N/A for MOVE.
     • Never infer a direction (upgraded/downgraded, beat/missed, rose/fell) unless the headline states it.
     • An analysis or opinion headline about a company is NOT an announcement by that company. Never write "announces", "reports" or "launches" unless the headline says the company did it.
     • If a headline is ambiguous, restate it conservatively rather than interpreting it.
