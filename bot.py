@@ -336,11 +336,11 @@ SECTION — <b>🧭 Big Picture</b>
 SECTION — <b>🔬 Semis + AI Headlines</b>
 SELECTION RULES:
   • Only consider headlines that name a specific company.
-  • Pick the 5 MOST IMPORTANT for someone following semis and AI — real news (deals, earnings, products, guidance, regulation, legal action, analyst rating changes).
+  • Pick 5 — the MOST IMPORTANT for someone following semis and AI — real news (deals, earnings, products, guidance, regulation, legal action, analyst rating changes).
   • SKIP opinion and commentary pieces (e.g. "X is a triple threat", "Wall Street may be underestimating X") and multi-company roundups.
   • At most 2 lines per company.
   • ONE line per story. If several headlines report the same event (e.g. the same probe, deal or earnings), use only the most informative one.
-  • Fewer than 5 is fine if the rest are weak. If none qualify, write: <i>No strong catalysts found today.</i>
+  • Only go below 5 if fewer than 5 headlines qualify under these rules. Deals, product launches and analyst calls on named companies all qualify. If none qualify, write: <i>No strong catalysts found today.</i>
 
 For each pick, write exactly one line using this EXACT format — no exceptions:
 📌 <b>Company (TICKER, MOVE):</b> [what happened] [N]
@@ -463,7 +463,10 @@ def build_brief() -> str:
 
     print(f"  Calling Groq ({GROQ_MODEL})...")
     prompt   = build_prompt(headlines, ticker_moves, market_data)
-    llm_part = enforce_annotations(clean_llm_html(call_groq(prompt)), ticker_moves)
+    raw = call_groq(prompt)
+    # Logged so a thin brief can be traced to the LLM or to the post-processing
+    print("  LLM output:\n" + "\n".join(f"    | {line}" for line in raw.splitlines()))
+    llm_part = enforce_annotations(clean_llm_html(raw), ticker_moves)
     llm_part = link_sources(cap_per_company(llm_part), headlines)
     big_picture, llm_rest = split_big_picture(llm_part)
 
