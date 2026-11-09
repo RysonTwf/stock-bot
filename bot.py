@@ -62,28 +62,34 @@ SEMI_AI_KEYWORDS = [
 # ---------------------------------------------------------------------------
 # Market data
 # ---------------------------------------------------------------------------
-def get_market_data() -> dict:
+def fetch_all_quotes(watchlist_tickers: list[str]) -> dict[str, dict]:
+    """One live-quote snapshot for every section of the brief.
+
+    Fetching per section put seconds between snapshots, so the same stock
+    could show different moves in the headlines and the watchlist.
+    """
+    symbols = list({**INDICES, **SECTORS}.values()) + MOVERS_UNIVERSE + watchlist_tickers
+    return get_live_quotes(list(dict.fromkeys(symbols)))
+
+
+def get_market_data(quotes: dict[str, dict]) -> dict:
     """Live price + % change vs last completed close (any session) per index/ETF.
 
-    Same quote source as movers and the watchlist (watchlist.get_live_quotes),
-    so every section of the brief shares one session-aware baseline. Cash
-    indices don't trade pre-market, so until the open they show the last close
-    vs the close before it — same numbers the old daily-bars version produced.
+    Same quote snapshot as movers and the watchlist, so every section of the
+    brief shares one session-aware baseline. Cash indices don't trade
+    pre-market, so until the open they show the last close vs the close
+    before it — same numbers the old daily-bars version produced.
     """
     tickers = {**INDICES, **SECTORS}
-    quotes = get_live_quotes(list(tickers.values()))
     return {name: q for name, sym in tickers.items() if (q := quotes.get(sym))}
 
 
-def get_universe_moves() -> dict[str, float]:
-    """Live % change vs prev close (any session: pre/regular/post) per ticker.
-
-    Same quote source as the watchlist, so annotations and movers always
-    match what /watchlist shows.
-    """
+def get_universe_moves(quotes: dict[str, dict]) -> dict[str, float]:
+    """Live % change vs prev close (any session: pre/regular/post) per movers-universe ticker."""
     moves: dict[str, float] = {}
-    for ticker, q in get_live_quotes(MOVERS_UNIVERSE).items():
-        if q["stale"]:
+    for ticker in MOVERS_UNIVERSE:
+        q = quotes.get(ticker)
+        if not q or q["stale"]:
             continue  # last trade >2h old — no live session for this ticker
         val = round(q["change_pct"], 2)
         if abs(val) > 25:
@@ -294,7 +300,7 @@ RAW HEADLINES (may include noise — you must filter):
 ---
 
 SECTION — <b>🧭 Big Picture</b>
-- Exactly 2 sentences on what is driving tech and chip stocks today, using MARKET DATA and the headlines.
+- Exactly 2 sentences on WHY tech and chip stocks are moving today, using the headlines. Do not narrate the index or VIX moves themselves — the brief shows them right below.
 - Every claim must come from a headline or MARKET DATA. Do NOT mention earnings, fund flows, guidance or anything else no headline states.
 - Do NOT write any numbers or percentages here — the brief shows the exact figures elsewhere.
 
@@ -303,6 +309,7 @@ SELECTION RULES:
   • Only consider headlines that name a specific company.
   • Pick the 5 MOST IMPORTANT for someone following semis and AI — real news (deals, earnings, products, guidance, regulation, legal action, analyst rating changes).
   • SKIP opinion and commentary pieces (e.g. "X is a triple threat", "Wall Street may be underestimating X") and multi-company roundups.
+  • ONE line per story. If several headlines report the same event (e.g. the same probe, deal or earnings), use only the most informative one.
   • Fewer than 5 is fine if the rest are weak. If none qualify, write: <i>No strong catalysts found today.</i>
 
 For each pick, write exactly one line using this EXACT format — no exceptions:
@@ -322,12 +329,6 @@ or, ONLY when the headline itself states a reason or consequence:
     • Never infer a direction (upgraded/downgraded, beat/missed, rose/fell) unless the headline states it.
     • An analysis or opinion headline about a company is NOT an announcement by that company. Never write "announces", "reports" or "launches" unless the headline says the company did it.
     • If a headline is ambiguous, restate it conservatively rather than interpreting it.
-
-SECTION — <b>👀 One Thing To Watch</b>
-- Pick the single highest-conviction catalyst from the headlines section.
-- Name the company and ticker with its move in the same (TICKER, MOVE) format, and say what to watch for using only facts from the headline — no predictions of price moves.
-- If there were no catalysts: <i>No single standout catalyst today.</i>
-- Max 3 sentences.
 
 ---
 
@@ -404,22 +405,21 @@ def build_brief() -> str:
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[{ts}] Starting daily brief...")
 
-    print("  Fetching market data...")
-    market_data = get_market_data()
+    print("  Fetching live quotes...")
+    user_watchlist = load_watchlist()
+    quotes = fetch_all_quotes(user_watchlist)
+
+    market_data = get_market_data(quotes)
     for name, d in market_data.items():
         print(f"    {name}: {d['price']:,.2f} ({d['change_pct']:+.2f}%)")
 
-    print("  Fetching live movers...")
-    ticker_moves = get_universe_moves()
+    ticker_moves = get_universe_moves(quotes)
     sorted_moves = sorted(ticker_moves.items(), key=lambda x: x[1])
     for t, p in sorted_moves[-3:][::-1] + sorted_moves[:3]:
         print(f"    {t}: {p:+.2f}%")
 
-    print("  Fetching shared watchlist quotes...")
-    user_watchlist = load_watchlist()
     watchlist_section = ""
     if user_watchlist:
-        quotes = get_live_quotes(user_watchlist)
         watchlist_section = format_watchlist(user_watchlist, quotes, show_session=False) + "\n\n"
         for t in user_watchlist:
             q = quotes.get(t)

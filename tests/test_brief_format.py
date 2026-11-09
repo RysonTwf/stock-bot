@@ -85,7 +85,7 @@ def test_link_sources():
 
 def test_split_big_picture():
     llm = ("<b>🧭 Big Picture</b>\nChips lead as AI spending news piles up.\n\n"
-           "<b>🔬 Semis + AI Headlines</b>\n📌 line\n\n<b>👀 One Thing To Watch</b>\nwatch")
+           "<b>🔬 Semis + AI Headlines</b>\n📌 line\n📌 line two")
     big, rest = bot.split_big_picture(llm)
     assert big == "<b>🧭 Big Picture</b>\nChips lead as AI spending news piles up.", big
     assert rest.startswith("<b>🔬 Semis + AI Headlines</b>"), rest
@@ -100,6 +100,22 @@ def test_br_tags_become_newlines():
     # degraded to plain text (no bold, no links) on 2026-11-09
     out = bot.clean_llm_html("<b>🧭 Big Picture</b><br>One.<br/>Two.<BR />Three.")
     assert out == "<b>🧭 Big Picture</b>\nOne.\nTwo.\nThree.", out
+
+
+def test_sections_share_one_quote_snapshot():
+    # Movers/headline moves and the watchlist used to fetch quotes seconds apart,
+    # so MU showed +1.2% in headlines but +1.02% in the watchlist (2026-11-09)
+    quotes = {
+        "MU":    {"price": 697.05, "change_pct": 1.02, "stale": False},
+        "NVDA":  {"price": 177.29, "change_pct": -5.01, "stale": False},
+        "WOLF":  {"price": 1.0, "change_pct": 40.0, "stale": False},  # bad data
+        "INTC":  {"price": 20.0, "change_pct": 3.0, "stale": True},
+        "^GSPC": {"price": 7376.86, "change_pct": 0.31, "stale": False},
+    }
+    moves = bot.get_universe_moves(quotes)
+    assert moves == {"MU": 1.02, "NVDA": -5.01}, moves
+    market = bot.get_market_data(quotes)
+    assert market == {"S&P 500": quotes["^GSPC"]}, market
 
 
 def test_market_sections_have_no_per_header_session_label():
