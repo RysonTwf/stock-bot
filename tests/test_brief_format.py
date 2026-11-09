@@ -33,6 +33,8 @@ LOW_VALUE = [
     # Auto-generated fund-holdings filler
     "14 ETFs Add to ASML (ASML) Holdings on Nov. 5",
     "11 ETFs Add to Taiwan Semiconductor (TSM) on Thursday",
+    "NXP Semiconductors (NXPI): Net ETF Buying of $10.4 Million Recorded on Nov. 5",
+    "Notable ETF Outflow Detected - SMH, NVDA, AVGO",
     "Google makes a $300 move Pixel buyers should know",
     "What Nvidia investors need to know about the probe",
 ]
@@ -133,6 +135,14 @@ def test_cap_per_company():
     for kept in ("probe", "chips", "China focus", "Asia rally"):
         assert kept in out, out
     assert out.count("📌") == 4, out
+
+
+def test_flat_move_has_no_arrow():
+    # SMR showed "▲ +0.00%" in the 2026-11-09 watchlist
+    assert bot._arrow(0.0) == "•" and bot._arrow(0.004) == "•"
+    assert bot._arrow(0.01) == "▲" and bot._arrow(-0.01) == "▼"
+    out = bot.format_watchlist(["SMR"], {"SMR": {"price": 5.08, "change_pct": 0.001, "stale": False}})
+    assert "• SMR: 5.08 (+0.00%)" in out, out
 
 
 def test_market_sections_have_no_per_header_session_label():

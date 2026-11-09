@@ -9,7 +9,7 @@ import feedparser
 import requests
 from groq import Groq
 
-from watchlist import load_watchlist, get_live_quotes, format_watchlist, market_session
+from watchlist import arrow, load_watchlist, get_live_quotes, format_watchlist, market_session
 
 # ---------------------------------------------------------------------------
 # Config
@@ -115,6 +115,7 @@ LOW_VALUE_RE = re.compile(
     r"|\bstocks? that explain\b"
     r"|\bbuy, sell,? or hold\b"
     r"|^\d+ ETFs (add|cut|trim|boost)\b"
+    r"|\bnet ETF (buying|selling)\b|\bnotable ETF (inflow|outflow)\b"
     r"|\b(should|need to) know\b"
     r"|^\d+\s+(\w+\s+){0,4}(stocks?|reasons?|things|ways)\b"
     r"|\?\s*$",
@@ -184,7 +185,7 @@ def _vix_mood(val: float) -> str:
 
 
 def _arrow(pct: float) -> str:
-    return "▲" if pct >= 0 else "▼"
+    return arrow(pct)
 
 
 def build_market_sections(market_data: dict, ticker_moves: dict[str, float]) -> str:

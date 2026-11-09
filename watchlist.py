@@ -237,6 +237,13 @@ def get_live_quotes(tickers: list[str]) -> dict[str, dict]:
     return quotes
 
 
+def arrow(pct: float) -> str:
+    """▲/▼ for a move, • when it rounds to +0.00% (an up arrow on no change misleads)."""
+    if round(pct, 2) == 0:
+        return "•"
+    return "▲" if pct > 0 else "▼"
+
+
 def format_watchlist(tickers: list[str], quotes: dict[str, dict], show_session: bool = True) -> str:
     """Render the watchlist as Telegram HTML. Numbers come straight from yfinance.
 
@@ -253,7 +260,6 @@ def format_watchlist(tickers: list[str], quotes: dict[str, dict], show_session: 
         if not q:
             lines.append(f"• {html.escape(t)}: <i>no data</i>")
             continue
-        arrow = "▲" if q["change_pct"] >= 0 else "▼"
         tags = " <i>(last trade &gt;2h ago)</i>" if q.get("stale") else ""
-        lines.append(f"{arrow} {html.escape(t)}: {q['price']:,.2f} ({q['change_pct']:+.2f}%){tags}")
+        lines.append(f"{arrow(q['change_pct'])} {html.escape(t)}: {q['price']:,.2f} ({q['change_pct']:+.2f}%){tags}")
     return "\n".join(lines)
