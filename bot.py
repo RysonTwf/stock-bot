@@ -108,6 +108,7 @@ LOW_VALUE_RE = re.compile(
     r"|\bthis is the\b|\bwith this\b|\bthis respected\b|\bact now\b"
     r"|\bstocks? that explain\b"
     r"|\bbuy, sell,? or hold\b"
+    r"|^\d+ ETFs (add|cut|trim|boost)\b"
     r"|^\d+\s+(\w+\s+){0,4}(stocks?|reasons?|things|ways)\b"
     r"|\?\s*$",
     re.IGNORECASE,
@@ -294,6 +295,7 @@ RAW HEADLINES (may include noise — you must filter):
 
 SECTION — <b>🧭 Big Picture</b>
 - Exactly 2 sentences on what is driving tech and chip stocks today, using MARKET DATA and the headlines.
+- Every claim must come from a headline or MARKET DATA. Do NOT mention earnings, fund flows, guidance or anything else no headline states.
 - Do NOT write any numbers or percentages here — the brief shows the exact figures elsewhere.
 
 SECTION — <b>🔬 Semis + AI Headlines</b>
@@ -304,23 +306,26 @@ SELECTION RULES:
   • Fewer than 5 is fine if the rest are weak. If none qualify, write: <i>No strong catalysts found today.</i>
 
 For each pick, write exactly one line using this EXACT format — no exceptions:
-📌 <b>Company (TICKER, MOVE):</b> [what happened] — [why it matters] [N]
+📌 <b>Company (TICKER, MOVE):</b> [what happened] [N]
+or, ONLY when the headline itself states a reason or consequence:
+📌 <b>Company (TICKER, MOVE):</b> [what happened] — [the reason or consequence the headline states] [N]
   - Company: the company's common name, e.g. Nvidia, Micron, TSMC — never the ticker.
   - TICKER: the stock ticker symbol, e.g. NVDA, MU, TSM
   - MOVE: find the ticker in PRICE DATA and copy its % exactly. If the ticker is not in PRICE DATA write N/A.
   - NEVER omit TICKER or MOVE. NEVER write "no move". Always write N/A if data is missing.
   - N: the number of the headline in RAW HEADLINES, in square brackets, e.g. [3]. Always include it.
-  - Keep the explanation after the dash under 20 words.
+  - [what happened] restates the headline in its own terms, under 20 words. Do not add your own reading of why it matters.
   - ACCURACY RULES (highest priority):
     • Do NOT invert buy/sell/upgrade/downgrade direction. Copy the action word from the headline exactly.
     • Do NOT add facts that are not in the headline. No speculation about reasons or amounts.
     • The company MUST be named in that headline. Never attach a headline to a company it does not mention.
     • Never infer a direction (upgraded/downgraded, beat/missed, rose/fell) unless the headline states it.
+    • An analysis or opinion headline about a company is NOT an announcement by that company. Never write "announces", "reports" or "launches" unless the headline says the company did it.
     • If a headline is ambiguous, restate it conservatively rather than interpreting it.
 
 SECTION — <b>👀 One Thing To Watch</b>
 - Pick the single highest-conviction catalyst from the headlines section.
-- Name the company and ticker with its move in the same (TICKER, MOVE) format, and say why it matters TODAY using only facts from the headline.
+- Name the company and ticker with its move in the same (TICKER, MOVE) format, and say what to watch for using only facts from the headline — no predictions of price moves.
 - If there were no catalysts: <i>No single standout catalyst today.</i>
 - Max 3 sentences.
 

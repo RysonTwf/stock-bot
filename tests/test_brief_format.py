@@ -30,6 +30,9 @@ LOW_VALUE = [
     "AMD Shed Nearly 30% in 30 Days: This Respected Wall Street Team Expects 75% Gains For Those Who Act Now",
     "Nvidia, AMD, Intel, Berkshire Hathaway, and More Stocks That Explain Today's Market",
     "Buy, Sell, or Hold? Monday's Top Upgrades and Downgrades: Advanced Micro Devices, Airbnb, Nvidia, and More",
+    # Auto-generated fund-holdings filler
+    "14 ETFs Add to ASML (ASML) Holdings on Nov. 5",
+    "11 ETFs Add to Taiwan Semiconductor (TSM) on Thursday",
 ]
 
 REAL_NEWS = [
@@ -44,6 +47,7 @@ REAL_NEWS = [
     "Nvidia Board Launches Probe In CEO Jensen Huang Spying Case. The Stock Is Falling.",
     "Tech stocks claw back some losses despite Nvidia concerns",
     "Markets Rally as Nvidia Fears Subside and Rotation Gathers Pace",
+    "Vanguard ETFs see record inflows as investors pile into tech",
 ]
 
 

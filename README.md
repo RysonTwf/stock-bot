@@ -231,14 +231,14 @@ VIX: 23.5 (-8.2%) — moderate
 ▲ AMD: 466.63 (+3.92%)
 
 🔬 Semis + AI Headlines
-📌 Nvidia (NVDA, -5.1%): Board opens probe into CEO spying case — governance risk hits the AI leader ↗
+📌 Nvidia (NVDA, -5.1%): Board launches probe into CEO Jensen Huang spying case ↗
 ...
 
 👀 One Thing To Watch
 ...
 ```
 
-The session (pre-market, regular hours, after-hours or market closed) is stated once at the top, and every section uses the same live quote source, so the numbers are directly comparable. Each headline ends with a ↗ link to its article. Before the AI sees the headlines, the bot drops listicles, buy/sell advice, teaser titles and Motley Fool syndication (`is_low_value_headline()` in `bot.py`); the AI then picks the 5 most important. The AI never supplies numbers: price moves and links are filled in by the bot.
+The session (pre-market, regular hours, after-hours or market closed) is stated once at the top, and every section uses the same live quote source, so the numbers are directly comparable. Each headline ends with a ↗ link to its article. Before the AI sees the headlines, the bot drops listicles, buy/sell advice, teaser titles and Motley Fool syndication (`is_low_value_headline()` in `bot.py`); the AI then picks the 5 most important and restates each one without adding its own interpretation. The AI never supplies numbers: price moves and links are filled in by the bot.
 
 ---
 
