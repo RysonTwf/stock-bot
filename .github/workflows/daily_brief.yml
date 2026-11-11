@@ -2,10 +2,10 @@ name: Daily Stock Brief
 
 on:
   schedule:
-    # 14:30 UTC, Mon–Fri = the US open (9:30 AM New York, 10:30 PM SGT)
-    # outside US daylight saving time. During US DST (Mar–Nov) the open is
-    # 13:30 UTC, so this lands an hour after it.
-    - cron: '30 14 * * 1-5'
+    # 08:45 UTC (4:45 PM SGT), Mon–Fri. GitHub starts scheduled runs anywhere
+    # from minutes to ~9 hours late, so this fires early and the job waits for
+    # the 9:30 AM New York open (wait_for_open.py, DST-aware).
+    - cron: '45 8 * * 1-5'
   workflow_dispatch:
     inputs:
       chat_id:
@@ -16,7 +16,8 @@ on:
 jobs:
   send-brief:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Up to 5h45m waiting for the open (GitHub's maximum is 360)
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repo
@@ -37,6 +38,17 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Wait for the US market open
+        if: github.event_name == 'schedule'
+        run: python wait_for_open.py
+
+      # The wait can last hours: pick up watchlist edits made meanwhile
+      - name: Refresh to latest main
+        if: github.event_name == 'schedule'
+        uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Send daily brief
         env:

@@ -1,6 +1,6 @@
 # Daily Stock Market Brief Bot
 
-A Telegram bot that sends a market briefing every weekday at the US market open (14:30 UTC, 10:30 PM SGT; GitHub can start scheduled runs a few minutes late), covering S&P 500, Nasdaq, Dow, plus a two-line Big Picture and the top semiconductor and AI/Big Tech headlines picked and summarised by Groq's `openai/gpt-oss-120b`.
+A Telegram bot that sends a market briefing every weekday at the US market open (9:30 AM New York: 10:30 PM SGT, or 9:30 PM SGT during US daylight saving time). GitHub starts scheduled runs unpredictably late, so the workflow fires at 08:45 UTC and waits for the open, covering S&P 500, Nasdaq, Dow, plus a two-line Big Picture and the top semiconductor and AI/Big Tech headlines picked and summarised by Groq's `openai/gpt-oss-120b`.
 
 Also supports on-demand Telegram commands via a Flask webhook hosted on PythonAnywhere, including a shared watchlist with live pre/post-market prices.
 
@@ -32,8 +32,9 @@ The watchlist is shared by everyone in the group (single-group bot). It is store
 | `watchlist.json` | The shared watchlist itself (committed by the webhook via GitHub API) |
 | `tests/test_brief_format.py` | Standalone test (no pytest) for the headline filter, source links and Big Picture placement |
 | `tests/test_prev_close.py` | Standalone test (no pytest) for prev-close selection; run it directly for a live AMD/NVDA sanity check |
+| `wait_for_open.py` | Holds the scheduled run until 9:30 AM New York (`tests/test_wait_for_open.py` covers it) |
 | `requirements.txt` | Python dependencies |
-| `.github/workflows/daily_brief.yml` | GitHub Actions scheduler (Mon–Fri, 14:30 UTC) |
+| `.github/workflows/daily_brief.yml` | GitHub Actions scheduler (Mon–Fri, fires 08:45 UTC, waits for the open) |
 | `.github/workflows/keepalive.yml` | Monthly empty commit so GitHub doesn't disable the schedule after 60 days of inactivity |
 | `CLAUDE.md` | Architecture notes for AI-assisted development |
 
