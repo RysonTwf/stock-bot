@@ -2,10 +2,11 @@ name: Daily Stock Brief
 
 on:
   schedule:
-    # 08:45 UTC (4:45 PM SGT), Mon–Fri. GitHub starts scheduled runs anywhere
-    # from minutes to ~9 hours late, so this fires early and the job waits for
-    # the 9:30 AM New York open (wait_for_open.py, DST-aware).
-    - cron: '45 8 * * 1-5'
+    # 04:45 UTC (12:45 PM SGT), Mon–Fri. GitHub has been starting scheduled
+    # runs ~9 hours late (13 Nov: 08:45 cron ran 16:44-18:56), so this fires
+    # early and the job waits for the 9:30 AM New York open (wait_for_open.py,
+    # DST-aware, wait capped below the 6-hour job limit).
+    - cron: '45 4 * * 1-5'
   workflow_dispatch:
     inputs:
       chat_id:

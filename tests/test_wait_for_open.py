@@ -31,8 +31,15 @@ def run_tests():
     # Exactly at the open.
     assert wait_for_open.seconds_until_open(utc(2026, 11, 12, 14, 30)) == 0
 
-    # Longest possible wait fits GitHub's 6-hour job limit with room to run the brief.
-    assert wait_for_open.seconds_until_open(utc(2026, 11, 12, 8, 45)) < 355 * 60
+    # Cron at 04:45 UTC, GitHub ~9h late (the norm in Nov 2026): waits for the open.
+    assert wait_for_open.seconds_until_open(utc(2026, 11, 20, 13, 40)) == 50 * 60
+
+    # GitHub on time: a ~9h45m wait would hit the 6-hour job limit and send
+    # nothing, so the wait is capped and the brief goes out early instead.
+    # 04:45 UTC is 23:45 the previous day in New York: still waits for *this*
+    # morning's open rather than treating yesterday's as passed and sending now.
+    assert wait_for_open.seconds_until_open(utc(2026, 11, 20, 4, 45)) == wait_for_open.MAX_WAIT
+    assert wait_for_open.MAX_WAIT < 355 * 60
 
     print("All tests passed.")
 
